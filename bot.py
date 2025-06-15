@@ -437,8 +437,10 @@ async def send_current_image(event, new_message=False):
             buttons=keyboard
         )
         
-        # Сохраняем текущее изображение для создания мема
-        user_data['current_image'] = current_image
+        # Сохраняем текущее изображение для создания мема в данных пользователя
+        if user_id not in user_data:
+            user_data[user_id] = {}
+        user_data[user_id]['current_image'] = current_image
         
     except Exception as e:
         logger.error(f"Ошибка при отправке изображения: {e}")
@@ -448,22 +450,31 @@ async def send_current_image(event, new_message=False):
         except Exception as msg_error:
             logger.error(f"Не удалось отправить сообщение об ошибке: {msg_error}")
 
+@bot.on(events.CallbackQuery(pattern=r"create_meme$"))
 async def create_meme_button_handler(event):
     """
     Обработчик нажатия кнопки "Создать мем"
     """
     user_id = event.sender_id
     
-    # Проверяем, есть ли активное изображение для этого пользователя
-    if user_id not in user_state['images'] or user_state['images'][user_id] is None:
-        await event.respond("⚠️ Сначала выберите изображение, для которого хотите создать мем.")
+    # Проверяем, что пользователь авторизован
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        return
+    
+    # Правильная проверка наличия изображения
+    if not user_state['current_category'] or not user_state['images'].get(user_state['current_category']):
+        await event.respond("⚠️ Сначала выберите категорию и изображение")
         return
 
+    # Получаем текущее изображение
+    current_image = user_state['images'][user_state['current_category']][user_state['current_index']]
+    
     # Сохраняем текущее изображение в данных пользователя
     if user_id not in user_data:
         user_data[user_id] = {}
     
-    user_data[user_id]['current_image'] = user_state['images'][user_id][user_state['current_index']]
+    user_data[user_id]['current_image'] = current_image
     
     # Устанавливаем состояние - ожидание верхнего текста
     user_states[user_id] = AWAITING_TOP_TEXT
@@ -475,13 +486,15 @@ async def create_meme_button_handler(event):
 async def text_message_handler(event):
     """Обработчик текстовых сообщений для создания мема"""
     user_id = event.sender_id
+    message_text = event.raw_text
+    
+    # Добавляем отладочный лог для отслеживания входящих сообщений и состояния
+    logger.info(f"Получено сообщение от пользователя {user_id}: '{message_text}', текущее состояние: {user_states.get(user_id, 'нет')}")
     
     # Проверяем, является ли пользователь администратором
     if user_id != ADMIN_USER_ID:
         await event.respond("⛔ У вас нет доступа к этому боту.")
         return
-    
-    message_text = event.raw_text
     
     # Обрабатываем ввод пароля
     if user_id in user_states and user_states[user_id] == AWAITING_PASSWORD:
@@ -527,10 +540,12 @@ async def text_message_handler(event):
     # Обработка состояний FSM для создания мема
     if user_id in user_states:
         state = user_states[user_id]
+        logger.info(f"Обрабатываем состояние {state} для пользователя {user_id}")
         
         if state == AWAITING_TOP_TEXT:
             # Пользователь ввел верхний текст, сохраняем его
             user_data[user_id]['top_text'] = message_text
+            logger.info(f"Сохранен верхний текст для пользователя {user_id}: '{message_text}'")
             
             # Меняем состояние на ожидание нижнего текста
             user_states[user_id] = AWAITING_BOTTOM_TEXT
@@ -542,9 +557,17 @@ async def text_message_handler(event):
         elif state == AWAITING_BOTTOM_TEXT:
             # Пользователь ввел нижний текст, сохраняем его
             user_data[user_id]['bottom_text'] = message_text
+            logger.info(f"Сохранен нижний текст для пользователя {user_id}: '{message_text}'")
             
             # Сбрасываем состояние
             del user_states[user_id]
+            
+            # Проверяем наличие всех необходимых данных
+            if 'current_image' not in user_data[user_id] or 'top_text' not in user_data[user_id]:
+                logger.error(f"Отсутствуют необходимые данные для создания мема у пользователя {user_id}")
+                await event.respond("❌ Ошибка: отсутствуют необходимые данные для создания мема. Попробуйте снова.")
+                user_data[user_id] = {}  # Очищаем данные
+                return
             
             # Создаем мем на основе введенных данных
             image_path = user_data[user_id]['current_image']
@@ -574,6 +597,7 @@ async def text_message_handler(event):
         elif state == AWAITING_AI_THEME:
             # Пользователь ввел тему для генерации мема с помощью ИИ
             theme = message_text
+            logger.info(f"Получена тема для ИИ-мема от пользователя {user_id}: '{theme}'")
             
             # Сбрасываем состояние
             del user_states[user_id]
@@ -619,6 +643,11 @@ async def text_message_handler(event):
             # Сбрасываем данные пользователя
             user_data[user_id] = {}
             return
+    else:
+        # Если пользователь не находится в каком-либо состоянии FSM, 
+        # но отправил текстовое сообщение - игнорируем его
+        logger.info(f"Получено сообщение вне FSM от пользователя {user_id}: '{message_text}'")
+        # Не отвечаем, чтобы не спамить пользователя
 
 async def create_meme(image_path, top_text, bottom_text):
     """
@@ -1339,6 +1368,7 @@ async def help_handler(event):
         "Используйте кнопки для навигации по коллекции мемов."
     )
 
+@bot.on(events.CallbackQuery())
 async def callback_handler(event):
     """Обработчик callback-запросов от кнопок"""
     user_id = event.sender_id
@@ -1513,9 +1543,9 @@ async def main():
     # Загружаем изображения при старте
     user_state['images'] = await load_images()
     
-    # Регистрируем обработчики
-    register_handlers()
-    logger.info("Обработчики бота зарегистрированы")
+    # Обработчики уже зарегистрированы через декораторы @bot.on()
+    # Не нужно вызывать register_handlers() повторно
+    logger.info("Обработчики бота зарегистрированы через декораторы")
     
     try:
         # Запуск бота
