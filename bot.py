@@ -29,6 +29,8 @@ API_HASH = os.getenv('API_HASH')
 OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
 # Модель Ollama (по умолчанию phi3)
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'phi3')
+# Пароль для доступа к боту
+BOT_PASSWORD = os.getenv('BOT_PASSWORD', 'admin123')
 
 # Инициализация клиента - перемещаем в глобальную область видимости
 bot = TelegramClient('meme_bot_session', API_ID, API_HASH)
@@ -57,12 +59,42 @@ AWAITING_BOTTOM_TEXT = "awaiting_bottom_text"  # Состояние ожидан
 AWAITING_AI_THEME = "awaiting_ai_theme"  # Состояние ожидания ввода темы для ИИ-генерации
 CREATING_AI_MEME = "creating_ai_meme"  # Состояние создания мема полностью через ИИ
 AWAITING_TEMPLATE_THEME = "awaiting_template_theme"  # Новое состояние - ожидаем выбор темы
+AWAITING_PASSWORD = "awaiting_password"  # Новое состояние - ожидание ввода пароля
+
+# Темы для шаблонов мемов
+TEMPLATE_THEMES = [
+    "Программирование", "Работа", "Интернет", "Отношения", 
+    "Еда", "Технологии", "Животные", "Спорт",
+    "Учеба", "Путешествия"
+]
+
+# Эмодзи для тем
+THEME_EMOJI = {
+    "программирование": "💻",
+    "работа": "💼",
+    "интернет": "🌐",
+    "отношения": "❤️",
+    "еда": "🍔",
+    "технологии": "📱",
+    "животные": "🐱",
+    "спорт": "🏃",
+    "учеба": "📚",
+    "путешествия": "✈️"
+}
+
+# Функция для получения эмодзи для темы
+def get_emoji_for_theme(theme):
+    """Возвращает эмодзи для темы шаблона"""
+    return THEME_EMOJI.get(theme.lower(), "📝")
 
 # Словарь для хранения текущего состояния пользователя
 user_states = {}
 
 # Словарь для хранения данных пользователя (текущее изображение, тексты и т.д.)
 user_data = {}
+
+# Словарь для хранения авторизованных пользователей
+authenticated_users = set()  # Множество ID пользователей, прошедших аутентификацию
 
 # Состояние пользователя
 user_state = {
@@ -439,26 +471,58 @@ async def create_meme_button_handler(event):
     # Отправляем сообщение с просьбой ввести текст
     await event.respond("✏️ Введите текст, который будет размещен СВЕРХУ изображения (или отправьте /cancel для отмены):")
 
-async def message_handler(event):
-    """
-    Обработчик текстовых сообщений
-    """
+@bot.on(events.NewMessage(func=lambda e: e.is_private))
+async def text_message_handler(event):
+    """Обработчик текстовых сообщений для создания мема"""
     user_id = event.sender_id
-    message_text = event.raw_text
     
     # Проверяем, является ли пользователь администратором
     if user_id != ADMIN_USER_ID:
         await event.respond("⛔ У вас нет доступа к этому боту.")
         return
-        
-    # Обрабатываем команду /cancel для отмены создания мема
-    if message_text == "/cancel":
-        if user_id in user_states:
+    
+    message_text = event.raw_text
+    
+    # Обрабатываем ввод пароля
+    if user_id in user_states and user_states[user_id] == AWAITING_PASSWORD:
+        if message_text == BOT_PASSWORD:
+            # Пароль верный
+            authenticated_users.add(user_id)
+            user_states.pop(user_id)  # Удаляем состояние ожидания пароля
+            
+            await event.respond(
+                "✅ Пароль принят!\n\n"
+                "Выбери категорию, чтобы начать просмотр:",
+                buttons=[
+                    [Button.inline("С текстом", data="category_with_text")],
+                    [Button.inline("Без текста", data="category_without_text")],
+                    [Button.inline("Обновить коллекцию", data="reload_images")]
+                ]
+            )
+            logger.info(f"Пользователь {user_id} успешно авторизовался")
+        else:
+            # Пароль неверный
+            await event.respond("❌ Неверный пароль. Попробуйте еще раз или отправьте /cancel для отмены.")
+            logger.warning(f"Попытка ввода неверного пароля от пользователя {user_id}")
+        return
+    
+    # Проверяем авторизацию для других операций
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        return
+    
+    # Обрабатываем команды
+    if message_text.startswith('/'):
+        if message_text == '/cancel' and user_id in user_states:
+            if user_states[user_id] == AWAITING_PASSWORD:
+                await event.respond("❌ Авторизация отменена.")
+            else:
+                await event.respond("❌ Создание мема отменено.")
             del user_states[user_id]
             if user_id in user_data:
                 user_data[user_id] = {}
-            await event.respond("❌ Создание мема отменено.")
-            return
+        # Для остальных команд используем существующие обработчики
+        return
     
     # Обработка состояний FSM для создания мема
     if user_id in user_states:
@@ -494,16 +558,19 @@ async def message_handler(event):
             
             if meme_path:
                 # Отправляем мем пользователю
-                await event.respond(f"✅ Вот ваш мем: {meme_path}")
+                await bot.send_file(user_id, meme_path, caption="✅ Вот ваш мем!")
                 
-                # Сбрасываем данные пользователя
-                user_data[user_id] = {}
+                # Обновляем список изображений
+                user_state['images'] = await load_images()
+                
                 logger.info(f"Создан новый мем: {meme_path}")
             else:
                 await event.respond("❌ Произошла ошибка при создании мема.")
             
+            # Сбрасываем данные пользователя
+            user_data[user_id] = {}
             return
-        
+            
         elif state == AWAITING_AI_THEME:
             # Пользователь ввел тему для генерации мема с помощью ИИ
             theme = message_text
@@ -530,8 +597,8 @@ async def message_handler(event):
                 
                 if meme_path:
                     # Отправляем готовый мем
-                    await event.client.send_file(
-                        event.chat_id,
+                    await bot.send_file(
+                        user_id,
                         file=str(meme_path),
                         caption=f"✅ Мем создан ИИ по теме '{theme}':\n\nВерх: {top_text}\nНиз: {bottom_text}"
                     )
@@ -552,9 +619,6 @@ async def message_handler(event):
             # Сбрасываем данные пользователя
             user_data[user_id] = {}
             return
-    
-    # Обработка обычных сообщений (не связанных с созданием мема)
-    # ... existing message handling code ...
 
 async def create_meme(image_path, top_text, bottom_text):
     """
@@ -767,11 +831,32 @@ def get_image_keyboard(image_index, total_images, category):
     
     return keyboard
 
-# В функции регистрации обработчиков добавляем наш новый обработчик
 def register_handlers():
     """
     Регистрирует все обработчики бота
     """
+    # Обработчики команд
+    bot.add_event_handler(
+        start_handler,
+        events.NewMessage(pattern='/start')
+    )
+    
+    bot.add_event_handler(
+        logout_handler,
+        events.NewMessage(pattern='/logout')
+    )
+    
+    bot.add_event_handler(
+        help_handler,
+        events.NewMessage(pattern='/help')
+    )
+    
+    # Общий обработчик callback
+    bot.add_event_handler(
+        callback_handler,
+        events.CallbackQuery()
+    )
+    
     # Обработчик кнопки создания мема
     bot.add_event_handler(
         create_meme_button_handler,
@@ -802,26 +887,29 @@ def register_handlers():
     
     bot.add_event_handler(
         handle_template_selection,
-        events.CallbackQuery(pattern=r"template_.*")
+        events.CallbackQuery(pattern=r"template_")
     )
     
-    # Обработчик текстовых сообщений для ввода текста мема
+    # Обработчик текстовых сообщений для создания мема
     bot.add_event_handler(
-        message_handler,
+        text_message_handler,
         events.NewMessage(func=lambda e: e.is_private)
     )
-    
-    # ... existing handlers ...
 
 @bot.on(events.CallbackQuery(pattern=r"template_meme"))
 async def template_meme_handler(event):
-    """
-    Обработчик для создания мема с использованием предустановленных шаблонов
-    """
-    # Проверяем, что это администратор
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
-        await event.answer("🔒 У вас нет доступа к этому боту.")
+    """Обработчик для начала создания мема из шаблона"""
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
         return
     
     # Если не выбрана категория, ничего не делаем
@@ -840,64 +928,28 @@ async def template_meme_handler(event):
     current_image = user_state['images'][category][index]
     
     # Сохраняем изображение для мема
-    user_id = event.sender_id
     if user_id not in user_data:
         user_data[user_id] = {}
     user_data[user_id]['current_image_for_meme'] = current_image
+        
+    # Отправляем сообщение о нажатии
+    await event.answer()
     
-    # Создаём список доступных тем для шаблонов
-    templates_keyboard = []
-    
-    # Получаем список ключей из функции get_fallback_meme_text
-    template_categories = [
-        "программирование", "работа", "интернет", "отношения", 
-        "еда", "технологии", "животные", "спорт",
-        "учеба", "путешествия"
+    # Формируем кнопки для выбора темы шаблона
+    buttons = [
+        [Button.inline(f"{get_emoji_for_theme(theme)} {theme}", data=f"template_{theme.lower()}") 
+         for theme in TEMPLATE_THEMES[i:i+2]] 
+        for i in range(0, len(TEMPLATE_THEMES), 2)
     ]
     
-    # Формируем кнопки по 2 в ряд
-    for i in range(0, len(template_categories), 2):
-        row = []
-        # Добавляем эмодзи к категориям для лучшей визуализации
-        emoji_map = {
-            "программирование": "💻",
-            "работа": "💼",
-            "интернет": "🌐",
-            "отношения": "❤️",
-            "еда": "🍔",
-            "технологии": "📱",
-            "животные": "🐱",
-            "спорт": "🏃",
-            "учеба": "📚",
-            "путешествия": "✈️"
-        }
-        
-        # Первая кнопка в ряду
-        category = template_categories[i]
-        emoji = emoji_map.get(category, "📝")
-        button_text = f"{emoji} {category.capitalize()}"
-        row.append(Button.inline(button_text, data=f"template_{category}"))
-        
-        # Вторая кнопка, если она есть
-        if i + 1 < len(template_categories):
-            category = template_categories[i + 1]
-            emoji = emoji_map.get(category, "📝")
-            button_text = f"{emoji} {category.capitalize()}"
-            row.append(Button.inline(button_text, data=f"template_{category}"))
-            
-        templates_keyboard.append(row)
+    # Добавляем кнопку "Случайная тема"
+    buttons.append([Button.inline("🎲 Случайная тема", data="template_random")])
     
-    # Добавляем кнопку "Случайная тема" внизу
-    templates_keyboard.append([Button.inline("🎲 Случайная тема", data="template_random")])
+    # Добавляем кнопку назад
+    buttons.append([Button.inline("◀️ Назад", data="back_to_meme_menu")])
     
-    # Добавляем кнопку "Назад"
-    templates_keyboard.append([Button.inline("◀️ Назад", data="back_to_meme_menu")])
-    
-    # Меняем сообщение
-    await event.edit(
-        "Выберите тему шаблона для мема:",
-        buttons=templates_keyboard
-    )
+    # Отправляем сообщение с кнопками выбора темы
+    await event.edit("🎭 Выберите тему для шаблона мема:", buttons=buttons)
     
     # Устанавливаем состояние пользователя
     user_states[user_id] = AWAITING_TEMPLATE_THEME
@@ -907,14 +959,22 @@ async def back_to_meme_menu_handler(event):
     """
     Обработчик для возврата в меню создания мема
     """
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
-        await event.answer("🔒 У вас нет доступа к этому боту.")
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
         return
     
     # Сбрасываем состояние
-    user_id = event.sender_id
-    user_states[user_id] = None
+    if user_id in user_states:
+        user_states[user_id] = None
     
     try:
         # Удаляем текущее сообщение, так как event.edit не может изменять медиа
@@ -930,18 +990,26 @@ async def handle_template_selection(event):
     """
     Обработчик выбора шаблона для мема
     """
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
-        await event.answer("🔒 У вас нет доступа к этому боту.")
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
         return
     
-    user_id = event.sender_id
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Проверяем состояние пользователя
     if user_id not in user_states or user_states[user_id] != AWAITING_TEMPLATE_THEME:
         await event.answer("Сначала выберите опцию создания мема по шаблону")
         return
     
     # Получаем выбранную категорию
-    data = event.data.decode()
+    data = event.data.decode('utf-8')
     category = data.split("_")[1]
     
     # Отправляем уведомление
@@ -953,13 +1021,8 @@ async def handle_template_selection(event):
     try:
         # Если выбрана случайная тема
         if category == "random":
-            # Получаем список всех категорий
-            template_categories = [
-                "программирование", "работа", "интернет", "отношения", 
-                "еда", "технологии", "животные", "спорт",
-                "учеба", "путешествия"
-            ]
-            category = random.choice(template_categories)
+            # Получаем случайную категорию из списка
+            category = random.choice([theme.lower() for theme in TEMPLATE_THEMES])
         
         # Получаем текст для мема
         top_text, bottom_text = get_fallback_meme_text(category)
@@ -995,7 +1058,10 @@ async def handle_template_selection(event):
             
     except Exception as e:
         logger.error(f"Ошибка при создании мема по шаблону: {e}")
-        await event.edit(f"❌ Ошибка при создании мема: {str(e)}")
+        await event.edit(f"❌ Ошибка при создании мема: {str(e)}", 
+        buttons=[
+            [Button.inline("◀️ Назад", data="back_to_meme_menu")]
+        ])
         user_states[user_id] = None
 
 @bot.on(events.CallbackQuery(pattern=r"create_meme_ai_theme"))
@@ -1004,9 +1070,15 @@ async def create_meme_ai_theme_handler(event):
     Обработчик для создания мема с помощью ИИ по заданной теме
     """
     # Проверяем, что это администратор
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
-        await event.answer("🔒 У вас нет доступа к этому боту.")
+    user_id = event.sender_id
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
         return
     
     # Проверяем наличие текущей категории и изображения
@@ -1066,7 +1138,6 @@ async def create_meme_ai_theme_handler(event):
         return
     
     # Сохраняем текущее изображение для мема
-    user_id = event.sender_id
     if user_id not in user_data:
         user_data[user_id] = {}
     user_data[user_id]['current_image'] = current_image
@@ -1088,9 +1159,15 @@ async def create_meme_ai_auto_handler(event):
     Обработчик для автоматического создания мема с помощью ИИ (без ввода темы)
     """
     # Проверяем, что это администратор
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
-        await event.answer("🔒 У вас нет доступа к этому боту.")
+    user_id = event.sender_id
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
         return
     
     # Проверяем наличие текущей категории и изображения
@@ -1150,7 +1227,6 @@ async def create_meme_ai_auto_handler(event):
         return
     
     # Сохраняем текущее изображение для мема
-    user_id = event.sender_id
     if user_id not in user_data:
         user_data[user_id] = {}
     user_data[user_id]['current_image'] = current_image
@@ -1197,34 +1273,57 @@ async def create_meme_ai_auto_handler(event):
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
-    # Проверяем, что это администратор
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
-        await event.respond("🔒 У вас нет доступа к этому боту.")
-        return
+    """Обработчик команды /start"""
+    # Проверяем, что запрос от известного пользователя
+    user_id = event.sender_id
     
-    # Приветственное сообщение
-    await event.respond(
-        "👋 Привет! Я помогу тебе просматривать и сортировать мемы.\n\n"
-        "Выбери категорию, чтобы начать просмотр:",
-        buttons=[
-            [Button.inline("С текстом", data="category_with_text")],
-            [Button.inline("Без текста", data="category_without_text")],
-            [Button.inline("Обновить коллекцию", data="reload_images")]
-        ]
-    )
+    if user_id == ADMIN_USER_ID and user_id in authenticated_users:
+        # Если это администратор и он уже авторизован
+        await event.respond(
+            "👋 Привет! Я помогу тебе просматривать и сортировать мемы.\n\n"
+            "Выбери категорию, чтобы начать просмотр:",
+            buttons=[
+                [Button.inline("С текстом", data="category_with_text")],
+                [Button.inline("Без текста", data="category_without_text")],
+                [Button.inline("Обновить коллекцию", data="reload_images")]
+            ]
+        )
+    elif user_id == ADMIN_USER_ID:
+        # Если это администратор, но он еще не авторизован
+        await event.respond("🔒 Для доступа к боту введите пароль:")
+        user_states[user_id] = AWAITING_PASSWORD
+    else:
+        # Если это не администратор
+        await event.respond("🔒 У вас нет доступа к этому боту.")
+        
+    logger.info(f"Пользователь {user_id} запустил бота")
 
+@bot.on(events.NewMessage(pattern='/logout'))
+async def logout_handler(event):
+    """Обработчик для выхода из системы"""
+    user_id = event.sender_id
+    
+    if user_id in authenticated_users:
+        authenticated_users.remove(user_id)
+        await event.respond("🔒 Вы вышли из системы. Чтобы войти снова, отправьте /start")
+    else:
+        await event.respond("Вы не были авторизованы")
+        
 @bot.on(events.NewMessage(pattern='/help'))
 async def help_handler(event):
-    # Проверяем, что это администратор
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
+    """Обработчик команды /help"""
+    # Проверяем, что это администратор и он авторизован
+    user_id = event.sender_id
+    
+    if user_id != ADMIN_USER_ID or user_id not in authenticated_users:
+        await event.respond("🔒 У вас нет доступа к этому боту. Отправьте /start для ввода пароля.")
         return
     
     await event.respond(
         "📚 **Команды бота:**\n\n"
         "/start - начать работу с ботом\n"
-        "/help - показать эту справку\n\n"
+        "/help - показать эту справку\n"
+        "/logout - выйти из системы\n\n"
         "**Навигация:**\n"
         "⬅️/➡️ кнопки - переключение между мемами\n"
         "🗑️ - удаление мема\n"
@@ -1240,16 +1339,23 @@ async def help_handler(event):
         "Используйте кнопки для навигации по коллекции мемов."
     )
 
-@bot.on(events.CallbackQuery())
 async def callback_handler(event):
-    # Проверяем, что это администратор
-    sender = await event.get_sender()
-    if sender.id != ADMIN_USER_ID:
-        await event.answer("🔒 У вас нет доступа к этому боту.")
+    """Обработчик callback-запросов от кнопок"""
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
         return
     
-    data = event.data.decode()
-    logger.info(f"Нажата кнопка: {data}")
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    data = event.data.decode('utf-8')
+    logger.info(f"Получен callback: {data}")
     
     # Сначала отправляем уведомление о нажатии
     if data != "count":
@@ -1399,255 +1505,6 @@ async def callback_handler(event):
         except Exception as e:
             logger.error(f"Ошибка при перемещении мема: {e}")
             await event.answer(f"Ошибка при перемещении: {str(e)[:50]}...")
-    
-    elif data == "create_meme":
-        # Если не выбрана категория, ничего не делаем
-        if not user_state['current_category']:
-            await event.answer("Сначала выберите категорию")
-            return
-        
-        images = user_state['images'][user_state['current_category']]
-        if not images:
-            await event.answer("Нет изображений для создания мема")
-            return
-        
-        # Получаем текущее изображение
-        current_image = images[user_state['current_index']]
-        
-        # Сохраняем данные для дальнейшего использования
-        user_id = event.sender_id
-        if user_id not in user_data:
-            user_data[user_id] = {}
-        
-        user_data[user_id]['current_image'] = current_image
-        
-        # Устанавливаем состояние - ожидание верхнего текста
-        user_states[user_id] = AWAITING_TOP_TEXT
-        
-        # Отправляем сообщение с просьбой ввести текст
-        await event.respond("✏️ Введите текст, который будет размещен СВЕРХУ изображения (или отправьте /cancel для отмены):")
-        
-    elif data == "create_meme_ai_theme":
-        # Если не выбрана категория, ничего не делаем
-        if not user_state['current_category']:
-            await event.answer("Сначала выберите категорию")
-            return
-        
-        images = user_state['images'][user_state['current_category']]
-        if not images:
-            await event.answer("Нет изображений для создания мема")
-            return
-        
-        # Получаем текущее изображение
-        current_image = images[user_state['current_index']]
-        
-        # Проверяем доступность Ollama API
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(OLLAMA_API_URL.replace('/generate', '/version'), timeout=2) as response:
-                    if response.status != 200:
-                        await event.respond("❌ Сервер Ollama недоступен. Убедитесь, что Ollama запущен: https://ollama.com/download")
-                        return
-        except Exception:
-            await event.respond("❌ Не удалось подключиться к Ollama API. Убедитесь, что Ollama запущен: https://ollama.com/download")
-            return
-        
-        # Сохраняем данные для дальнейшего использования
-        user_id = event.sender_id
-        if user_id not in user_data:
-            user_data[user_id] = {}
-        
-        user_data[user_id]['current_image'] = current_image
-        
-        # Устанавливаем состояние - ожидание ввода темы для ИИ
-        user_states[user_id] = AWAITING_AI_THEME
-        
-        # Отправляем сообщение с просьбой ввести тему
-        await event.respond("🎭 Введите тему для генерации текста мема с помощью ИИ (например, 'программирование', 'работа', 'отношения'...) или отправьте /cancel для отмены:")
-        
-    elif data == "create_meme_ai_auto":
-        # Если не выбрана категория, ничего не делаем
-        if not user_state['current_category']:
-            await event.answer("Сначала выберите категорию")
-            return
-        
-        images = user_state['images'][user_state['current_category']]
-        if not images:
-            await event.answer("Нет изображений для создания мема")
-            return
-        
-        # Получаем текущее изображение
-        current_image = images[user_state['current_index']]
-        
-        # Проверяем доступность Ollama API
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(OLLAMA_API_URL.replace('/generate', '/version'), timeout=2) as response:
-                    if response.status != 200:
-                        await event.respond("❌ Сервер Ollama недоступен. Убедитесь, что Ollama запущен: https://ollama.com/download")
-                        return
-        except Exception:
-            await event.respond("❌ Не удалось подключиться к Ollama API. Убедитесь, что Ollama запущен: https://ollama.com/download")
-            return
-        
-        # Сохраняем данные для дальнейшего использования
-        user_id = event.sender_id
-        if user_id not in user_data:
-            user_data[user_id] = {}
-        
-        user_data[user_id]['current_image'] = current_image
-        
-        # Отправляем сообщение о генерации мема
-        processing_message = await event.respond("🧠 ИИ придумывает смешной текст для мема... Подождите немного.")
-        
-        try:
-            # Генерируем текст с помощью ИИ без указания темы (случайная тема)
-            top_text, bottom_text = await generate_meme_text()
-            
-            # Создаем мем с полученным текстом
-            meme_path = await create_meme(current_image, top_text, bottom_text)
-            
-            # Удаляем сообщение о генерации
-            await processing_message.delete()
-            
-            if meme_path:
-                # Отправляем готовый мем
-                await event.client.send_file(
-                    event.chat_id,
-                    file=str(meme_path),
-                    caption=f"✅ Мем создан ИИ:\n\nВерх: {top_text}\nНиз: {bottom_text}"
-                )
-                
-                # Обновляем список изображений
-                user_state['images'] = await load_images()
-                
-                logger.info(f"Создан новый мем с помощью ИИ: {meme_path}")
-            else:
-                await event.respond("❌ Произошла ошибка при создании мема.")
-        
-        except Exception as e:
-            # В случае ошибки удаляем сообщение о генерации и отправляем сообщение об ошибке
-            await processing_message.delete()
-            logger.error(f"Ошибка при автоматическом создании мема: {e}")
-            await event.respond(f"❌ Произошла ошибка при создании мема: {str(e)[:100]}...")
-
-@bot.on(events.NewMessage(func=lambda e: e.is_private))
-async def text_message_handler(event):
-    """Обработчик текстовых сообщений для создания мема"""
-    user_id = event.sender_id
-    
-    # Проверяем, является ли пользователь администратором
-    if user_id != ADMIN_USER_ID:
-        await event.respond("⛔ У вас нет доступа к этому боту.")
-        return
-    
-    message_text = event.raw_text
-    
-    # Обрабатываем команды
-    if message_text.startswith('/'):
-        if message_text == '/cancel' and user_id in user_states:
-            del user_states[user_id]
-            if user_id in user_data:
-                user_data[user_id] = {}
-            await event.respond("❌ Создание мема отменено.")
-        # Для остальных команд используем существующие обработчики
-        return
-    
-    # Обработка состояний FSM для создания мема
-    if user_id in user_states:
-        state = user_states[user_id]
-        
-        if state == AWAITING_TOP_TEXT:
-            # Пользователь ввел верхний текст, сохраняем его
-            user_data[user_id]['top_text'] = message_text
-            
-            # Меняем состояние на ожидание нижнего текста
-            user_states[user_id] = AWAITING_BOTTOM_TEXT
-            
-            # Просим ввести нижний текст
-            await event.respond("✏️ Теперь введите текст, который будет размещен СНИЗУ изображения (или отправьте /cancel для отмены):")
-            return
-            
-        elif state == AWAITING_BOTTOM_TEXT:
-            # Пользователь ввел нижний текст, сохраняем его
-            user_data[user_id]['bottom_text'] = message_text
-            
-            # Сбрасываем состояние
-            del user_states[user_id]
-            
-            # Создаем мем на основе введенных данных
-            image_path = user_data[user_id]['current_image']
-            top_text = user_data[user_id]['top_text']
-            bottom_text = user_data[user_id]['bottom_text']
-            
-            await event.respond("🔄 Создаю мем, пожалуйста, подождите...")
-            
-            # Создаем мем
-            meme_path = await create_meme(image_path, top_text, bottom_text)
-            
-            if meme_path:
-                # Отправляем мем пользователю
-                await bot.send_file(user_id, meme_path, caption="✅ Вот ваш мем!")
-                
-                # Обновляем список изображений
-                user_state['images'] = await load_images()
-                
-                logger.info(f"Создан новый мем: {meme_path}")
-            else:
-                await event.respond("❌ Произошла ошибка при создании мема.")
-            
-            # Сбрасываем данные пользователя
-            user_data[user_id] = {}
-            return
-            
-        elif state == AWAITING_AI_THEME:
-            # Пользователь ввел тему для генерации мема с помощью ИИ
-            theme = message_text
-            
-            # Сбрасываем состояние
-            del user_states[user_id]
-            
-            # Отправляем сообщение о генерации мема
-            processing_message = await event.respond(f"🧠 ИИ придумывает смешной текст на тему '{theme}'... Подождите немного.")
-            
-            try:
-                # Генерируем текст с помощью ИИ на основе темы
-                top_text, bottom_text = await generate_meme_text(theme)
-                
-                # Обновляем сообщение о статусе
-                await processing_message.edit(f"⚙️ Генерация текста завершена! Создаю мем...")
-                
-                # Создаем мем с полученным текстом
-                image_path = user_data[user_id]['current_image']
-                meme_path = await create_meme(image_path, top_text, bottom_text)
-                
-                # Удаляем сообщение о генерации
-                await processing_message.delete()
-                
-                if meme_path:
-                    # Отправляем готовый мем
-                    await bot.send_file(
-                        user_id,
-                        file=str(meme_path),
-                        caption=f"✅ Мем создан ИИ по теме '{theme}':\n\nВерх: {top_text}\nНиз: {bottom_text}"
-                    )
-                    
-                    # Обновляем список изображений
-                    user_state['images'] = await load_images()
-                    
-                    logger.info(f"Создан новый мем с помощью ИИ на тему '{theme}': {meme_path}")
-                else:
-                    await event.respond("❌ Произошла ошибка при создании мема.")
-            
-            except Exception as e:
-                # В случае ошибки удаляем сообщение о генерации и отправляем сообщение об ошибке
-                await processing_message.delete()
-                logger.error(f"Ошибка при генерации мема по теме '{theme}': {e}")
-                await event.respond(f"❌ Произошла ошибка при создании мема: {str(e)[:100]}...")
-            
-            # Сбрасываем данные пользователя
-            user_data[user_id] = {}
-            return
 
 async def main():
     """Запускает бота"""
@@ -1656,7 +1513,9 @@ async def main():
     # Загружаем изображения при старте
     user_state['images'] = await load_images()
     
-    # Регистрируем обработчики (бывшие в main, теперь перемещены в глобальную область)
+    # Регистрируем обработчики
+    register_handlers()
+    logger.info("Обработчики бота зарегистрированы")
     
     try:
         # Запуск бота
