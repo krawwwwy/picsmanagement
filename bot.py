@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 from datetime import datetime
+import shutil
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import InputMessagesFilterPhotos
 from dotenv import load_dotenv
@@ -83,6 +84,7 @@ async def send_current_image(event):
         ],
         [
             Button.inline("🗑️ Удалить", data="delete"),
+            Button.inline("🔄 Перенести", data="move"),
             Button.inline("📋 Меню", data="menu")
         ]
     ]
@@ -255,6 +257,57 @@ async def main():
             except Exception as e:
                 logger.error(f"Ошибка при удалении мема: {e}")
                 await event.answer(f"Ошибка при удалении: {str(e)[:50]}...")
+        
+        elif data == "move":
+            # Если не выбрана категория, ничего не делаем
+            if not user_state['current_category']:
+                await event.answer("Сначала выберите категорию")
+                return
+                
+            images = user_state['images'][user_state['current_category']]
+            if not images:
+                await event.answer("Нет изображений для перемещения")
+                return
+                
+            # Получаем текущее изображение
+            current_image = images[user_state['current_index']]
+            
+            # Определяем целевую директорию (противоположную текущей)
+            current_dir = WITH_TEXT_DIR if user_state['current_category'] == 'with_text' else WITHOUT_TEXT_DIR
+            target_dir = WITHOUT_TEXT_DIR if user_state['current_category'] == 'with_text' else WITH_TEXT_DIR
+            target_category = 'without_text' if user_state['current_category'] == 'with_text' else 'with_text'
+            
+            try:
+                # Создаем путь к новому файлу
+                filename = os.path.basename(current_image)
+                target_path = target_dir / filename
+                
+                # Если файл с таким именем уже существует, добавляем префикс
+                if target_path.exists():
+                    base, ext = os.path.splitext(filename)
+                    target_path = target_dir / f"{base}_moved{ext}"
+                
+                # Перемещаем файл
+                shutil.move(str(current_image), str(target_path))
+                await event.answer(f"Мем перемещен в категорию '{target_category}'!")
+                
+                # Обновляем список изображений
+                user_state['images'] = await load_images()
+                
+                # Показываем следующий мем (или информацию, что мемов больше нет)
+                if user_state['images'][user_state['current_category']]:
+                    # Если индекс теперь за пределами списка, корректируем
+                    if user_state['current_index'] >= len(user_state['images'][user_state['current_category']]):
+                        user_state['current_index'] = len(user_state['images'][user_state['current_category']]) - 1
+                    await send_current_image(event)
+                else:
+                    await event.edit(f"В категории больше нет мемов.", buttons=[
+                        [Button.inline("Вернуться в меню", data="menu")]
+                    ])
+                    
+            except Exception as e:
+                logger.error(f"Ошибка при перемещении мема: {e}")
+                await event.answer(f"Ошибка при перемещении: {str(e)[:50]}...")
     
     # Загружаем изображения при старте
     user_state['images'] = await load_images()

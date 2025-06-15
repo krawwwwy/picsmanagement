@@ -2,4 +2,6 @@ telethon==1.27.0
 pillow==9.4.0
 easyocr==1.7.0
 python-dotenv==1.0.0
-tqdm==4.65.0 
+tqdm==4.65.0
+opencv-python>=4.5.0
+numpy>=1.19.0 
