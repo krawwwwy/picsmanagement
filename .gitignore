@@ -1,0 +1,69 @@
+# Telegram sessions (личные данные)
+*.session
+*.session-journal
+meme_bot_session*
+meme_parser_session*
+
+# Переменные окружения (содержат токены и личные ключи API)
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+log/
+
+# Мемы и медиафайлы (личный контент)
+memes/**/*.jpg
+memes/**/*.jpeg
+memes/**/*.png
+memes/**/*.gif
+memes/**/*.webp
+memes/**/*.mp4
+memes/**/*.avi
+memes/*/
+
+# Виртуальное окружение
+venv/
+env/
+.env/
+.venv/
+ENV/
+pythonenv*/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*.sublime-workspace
+*.sublime-project
+.atom/
+.eclipse/
+*.code-workspace
+
+# Сборки и дистрибутивы
+dist/
+build/
+*.egg-info/
+
+# Данные для отладки
+debug/
+test_data/
+
+# Кэш и временные файлы 
+.tmp/
+.temp/
+tmp/
+temp/
+*.bak
+*.backup 
