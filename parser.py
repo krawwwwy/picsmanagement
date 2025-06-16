@@ -9,6 +9,8 @@ import re
 from dotenv import load_dotenv
 from utils import logger, save_image
 from classifier import classifier
+import argparse
+import sys
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -114,7 +116,66 @@ async def download_memes(client, channels, limit=30, offset_days=1):
     
     return total_saved
 
+def check_gpu_status():
+    """Проверяет статус GPU и выводит подробную информацию"""
+    import torch
+    import cv2
+    
+    print("\n" + "="*50)
+    print("ПРОВЕРКА GPU ДЛЯ ПАРСЕРА МЕМОВ")
+    print("="*50)
+    
+    # Проверка PyTorch (для EasyOCR)
+    torch_gpu = torch.cuda.is_available()
+    print(f"\n[PyTorch] GPU доступен: {'ДА' if torch_gpu else 'НЕТ'}")
+    
+    if torch_gpu:
+        print(f"  - Устройство: {torch.cuda.get_device_name(0)}")
+        print(f"  - CUDA версия: {torch.version.cuda}")
+        print(f"  - Количество GPU: {torch.cuda.device_count()}")
+        print(f"  - Память GPU: {torch.cuda.get_device_properties(0).total_memory / (1024**3):.2f} ГБ")
+    
+    # Проверка OpenCV
+    try:
+        cv_cuda = cv2.cuda.getCudaEnabledDeviceCount() > 0
+        print(f"\n[OpenCV] CUDA поддержка: {'ДА' if cv_cuda else 'НЕТ'}")
+        
+        if cv_cuda:
+            print(f"  - Доступно устройств: {cv2.cuda.getCudaEnabledDeviceCount()}")
+    except:
+        print("\n[OpenCV] CUDA поддержка: НЕТ (модуль cv2.cuda недоступен)")
+    
+    # Проверка EasyOCR
+    print(f"\n[EasyOCR] Использует GPU: {'ДА' if classifier.use_gpu else 'НЕТ'}")
+    
+    print("\nСКОРОСТЬ РАБОТЫ:")
+    if torch_gpu and classifier.use_gpu:
+        print("  * Высокая скорость - GPU режим активен")
+    else:
+        print("  * Низкая скорость - CPU режим")
+        print("\nДля ускорения работы в 10-50 раз рекомендуется:")
+        print("  1. Наличие NVIDIA GPU")
+        print("  2. Установка CUDA Toolkit: https://developer.nvidia.com/cuda-downloads")
+        print("  3. Установка PyTorch с CUDA: pip install torch --index-url https://download.pytorch.org/whl/cu118")
+    
+    print("\n" + "="*50)
+    print("Программа использует GPU: " + ("ДА" if classifier.use_gpu else "НЕТ"))
+    print("="*50 + "\n")
+
 async def main():
+    # Разбор аргументов командной строки
+    parser = argparse.ArgumentParser(description='Парсер мемов из Telegram')
+    parser.add_argument('--check-gpu', action='store_true', help='Проверить доступность GPU и выйти')
+    parser.add_argument('--limit', type=int, default=30, help='Максимальное кол-во сообщений для проверки')
+    parser.add_argument('--days', type=int, default=2, help='За сколько дней проверять сообщения')
+    
+    args = parser.parse_args()
+    
+    # Если запрошена проверка GPU
+    if args.check_gpu:
+        check_gpu_status()
+        return
+    
     logger.info(f"Запуск парсера мемов из Telegram с API_ID={API_ID} и API_HASH={API_HASH[:5]}...")
     
     # Инициализация клиента Telegram
@@ -128,8 +189,8 @@ async def main():
         saved_count = await download_memes(
             client, 
             SOURCE_CHANNELS, 
-            limit=30,  # Количество сообщений для проверки
-            offset_days=2  # Проверяем за последнюю неделю
+            limit=args.limit,
+            offset_days=args.days
         )
         
         logger.info(f"Парсинг завершен. Сохранено {saved_count} новых мемов.")
