@@ -595,7 +595,11 @@ async def text_message_handler(event):
             
             if meme_path:
                 # Отправляем мем пользователю
-                await bot.send_file(user_id, meme_path, caption="✅ Вот ваш мем!")
+                await bot.send_file(user_id, meme_path, caption="✅ Вот ваш мем!", buttons=[
+                    [Button.inline("📷 Создать еще мем", data="create_meme")],
+                    [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
+                    [Button.inline("📋 Главное меню", data="menu")]
+                ])
                 
                 # Обновляем список изображений
                 user_state['images'] = await load_images()
@@ -638,7 +642,13 @@ async def text_message_handler(event):
                     await bot.send_file(
                         user_id,
                         file=str(meme_path),
-                        caption=f"✅ Мем создан ИИ по теме '{theme}':\n\nВерх: {top_text}\nНиз: {bottom_text}"
+                        caption=f"✅ Мем создан ИИ по теме '{theme}':\n\nВерх: {top_text}\nНиз: {bottom_text}",
+                        buttons=[
+                            [Button.inline("📷 Создать еще мем", data="create_meme")],
+                            [Button.inline("🤖 Еще ИИ-мем", data="create_meme_ai_theme")],
+                            [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
+                            [Button.inline("📋 Главное меню", data="menu")]
+                        ]
                     )
                     
                     # Обновляем список изображений
@@ -1085,7 +1095,13 @@ async def handle_template_selection(event):
         await bot.send_file(
             user_id,
             file=str(meme_path),  # Преобразуем Path в строку
-            caption=f"✅ Мем создан по шаблону темы '{category}':\n\nВерх: {top_text}\nНиз: {bottom_text}"
+            caption=f"✅ Мем создан по шаблону темы '{category}':\n\nВерх: {top_text}\nНиз: {bottom_text}",
+            buttons=[
+                [Button.inline("📷 Создать еще мем", data="create_meme")],
+                [Button.inline("🎭 Еще по шаблону", data="template_meme")],
+                [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
+                [Button.inline("📋 Главное меню", data="menu")]
+            ]
         )
         
         # Обновляем список изображений
@@ -1290,7 +1306,13 @@ async def create_meme_ai_auto_handler(event):
         await bot.send_file(
             user_id,
             file=str(meme_path),
-            caption=f"✅ Мем создан с помощью ИИ:\n↑ {top_text}\n↓ {bottom_text}"
+            caption=f"✅ Мем создан с помощью ИИ:\n↑ {top_text}\n↓ {bottom_text}",
+            buttons=[
+                [Button.inline("📷 Создать еще мем", data="create_meme")],
+                [Button.inline("🧠 Еще ИИ-автомем", data="create_meme_ai_auto")],
+                [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
+                [Button.inline("📋 Главное меню", data="menu")]
+            ]
         )
         
         # Обновляем список изображений
