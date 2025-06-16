@@ -37,8 +37,8 @@
 
 1. Клонируйте репозиторий:
 ```bash
-git clone https://github.com/yourusername/meme-collector.git
-cd meme-collector
+https://github.com/krawwwwy/picsmanagement.git
+cd picsmanagement
 ```
 
 2. Установите зависимости:
