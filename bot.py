@@ -509,7 +509,9 @@ async def text_message_handler(event):
                 buttons=[
                     [Button.inline("С текстом", data="category_with_text")],
                     [Button.inline("Без текста", data="category_without_text")],
-                    [Button.inline("Обновить коллекцию", data="reload_images")]
+                    [Button.inline("Обновить коллекцию", data="reload_images")],
+                    [Button.inline("🚀 Запустить парсер", data="parse_memes")],
+                    [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")]
                 ]
             )
             logger.info(f"Пользователь {user_id} успешно авторизовался")
@@ -1350,7 +1352,9 @@ async def start_handler(event):
             buttons=[
                 [Button.inline("С текстом", data="category_with_text")],
                 [Button.inline("Без текста", data="category_without_text")],
-                [Button.inline("Обновить коллекцию", data="reload_images")]
+                [Button.inline("Обновить коллекцию", data="reload_images")],
+                [Button.inline("🚀 Запустить парсер", data="parse_memes")],
+                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")]
             ]
         )
     elif user_id == ADMIN_USER_ID:
@@ -1389,7 +1393,9 @@ async def help_handler(event):
         "/start - начать работу с ботом\n"
         "/help - показать эту справку\n"
         "/logout - выйти из системы\n"
-        "/skip - пропустить ввод текста при создании мема (можно также просто ввести 'skip')\n\n"
+        "/skip - пропустить ввод текста при создании мема (можно также просто ввести 'skip')\n"
+        "/parse - запустить парсер для сбора новых мемов из каналов\n"
+        "/clear - управление коллекцией мемов (очистка)\n\n"
         "**Навигация:**\n"
         "⬅️/➡️ кнопки - переключение между мемами\n"
         "🗑️ - удаление мема\n"
@@ -1434,7 +1440,9 @@ async def callback_handler(event):
             buttons=[
                 [Button.inline("С текстом", data="category_with_text")],
                 [Button.inline("Без текста", data="category_without_text")],
-                [Button.inline("Обновить коллекцию", data="reload_images")]
+                [Button.inline("Обновить коллекцию", data="reload_images")],
+                [Button.inline("🚀 Запустить парсер", data="parse_memes")],
+                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")]
             ]
         )
         
@@ -1447,7 +1455,9 @@ async def callback_handler(event):
             "Выбери категорию для просмотра:",
             buttons=[
                 [Button.inline("С текстом", data="category_with_text")],
-                [Button.inline("Без текста", data="category_without_text")]
+                [Button.inline("Без текста", data="category_without_text")],
+                [Button.inline("🚀 Запустить парсер", data="parse_memes")],
+                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")]
             ]
         )
         
@@ -1596,6 +1606,423 @@ async def main():
     finally:
         await bot.disconnect()
         logger.info("Бот остановлен")
+
+# Добавляем новые команды
+@bot.on(events.NewMessage(pattern='/parse'))
+async def parse_handler(event):
+    """Обработчик команды /parse для запуска парсера мемов"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор и он авторизован
+    if user_id != ADMIN_USER_ID or user_id not in authenticated_users:
+        await event.respond("🔒 У вас нет доступа к этому боту. Отправьте /start для ввода пароля.")
+        return
+    
+    # Отправляем сообщение о запуске парсера
+    message = await event.respond("🚀 Запускаю парсер мемов из Telegram-каналов...\nЭто может занять некоторое время.")
+    
+    try:
+        # Импортируем парсер из файла parser.py
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("parser", "parser.py")
+        parser_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(parser_module)
+        
+        # Запускаем парсер
+        import asyncio
+        task = asyncio.create_task(parser_module.main())
+        
+        # Обновляем сообщение с прогрессом
+        for i in range(5):
+            await message.edit(f"🚀 Парсер запущен. Обработка данных... {'.'.join(['■'] * (i+1))}")
+            await asyncio.sleep(1)
+        
+        # Дожидаемся завершения
+        await task
+        
+        # Обновляем список изображений
+        user_state['images'] = await load_images()
+        
+        with_text_count = len(user_state['images']['with_text'])
+        without_text_count = len(user_state['images']['without_text'])
+        
+        # Отправляем итоговое сообщение
+        await message.edit(
+            f"✅ Парсинг завершен!\n\n"
+            f"Текущая коллекция:\n"
+            f"📝 Мемы с текстом: {with_text_count}\n"
+            f"🖼️ Мемы без текста: {without_text_count}\n\n"
+            f"Выберите действие:",
+            buttons=[
+                [Button.inline("📷 Просмотреть мемы с текстом", data="category_with_text")],
+                [Button.inline("🖼️ Просмотреть мемы без текста", data="category_without_text")],
+                [Button.inline("📋 Главное меню", data="menu")]
+            ]
+        )
+    except Exception as e:
+        await message.edit(f"❌ Ошибка при запуске парсера: {str(e)}")
+
+@bot.on(events.NewMessage(pattern='/clear'))
+async def clear_handler(event):
+    """Обработчик команды /clear для очистки коллекции мемов"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор и он авторизован
+    if user_id != ADMIN_USER_ID or user_id not in authenticated_users:
+        await event.respond("🔒 У вас нет доступа к этому боту. Отправьте /start для ввода пароля.")
+        return
+    
+    # Отправляем сообщение с вариантами очистки
+    await event.respond(
+        "🗑️ Выберите, что именно хотите очистить:",
+        buttons=[
+            [Button.inline("❌ Все мемы", data="clear_all")],
+            [Button.inline("📝 Только мемы с текстом", data="clear_with_text")],
+            [Button.inline("🖼️ Только мемы без текста", data="clear_without_text")],
+            [Button.inline("↩️ Отмена", data="menu")]
+        ]
+    )
+
+# Обработчики для кнопок очистки
+@bot.on(events.CallbackQuery(pattern=r"clear_all|clear_with_text|clear_without_text"))
+async def clear_handler(event):
+    """Обработчик кнопок очистки коллекции"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    data = event.data.decode('utf-8')
+    
+    # Запрашиваем подтверждение
+    await event.edit(
+        f"⚠️ Вы уверены, что хотите очистить {'все мемы' if data == 'clear_all' else 'мемы с текстом' if data == 'clear_with_text' else 'мемы без текста'}?",
+        buttons=[
+            [Button.inline("✅ Да, очистить", data=f"confirm_{data}")],
+            [Button.inline("❌ Нет, отмена", data="clear_menu")]
+        ]
+    )
+
+@bot.on(events.CallbackQuery(pattern=r"confirm_clear_all|confirm_clear_with_text|confirm_clear_without_text"))
+async def confirm_clear_handler(event):
+    """Обработчик подтверждения очистки коллекции"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    data = event.data.decode('utf-8')
+    
+    # Определяем, что именно нужно очистить
+    clear_type = data.replace("confirm_", "")
+    
+    # Отправляем сообщение о начале очистки
+    await event.edit("🗑️ Выполняю очистку...")
+    
+    try:
+        import os
+        import shutil
+        from pathlib import Path
+        
+        # Определяем директории, которые нужно очистить
+        # Используем правильные пути из констант
+        image_dirs = []
+        if clear_type == "clear_all" or clear_type == "clear_with_text":
+            image_dirs.append(WITH_TEXT_DIR)
+        if clear_type == "clear_all" or clear_type == "clear_without_text":
+            image_dirs.append(WITHOUT_TEXT_DIR)
+        
+        # Очищаем директории
+        deleted_count = 0
+        for directory in image_dirs:
+            if os.path.exists(directory):
+                # Удаляем все файлы в директории
+                for filename in os.listdir(directory):
+                    file_path = os.path.join(directory, filename)
+                    try:
+                        if os.path.isfile(file_path) or os.path.islink(file_path):
+                            os.unlink(file_path)
+                            deleted_count += 1
+                    except Exception as e:
+                        logger.error(f"Ошибка при удалении {file_path}: {e}")
+                        await event.respond(f"❌ Ошибка при удалении {file_path}: {e}")
+        
+        # Обновляем список изображений
+        user_state['images'] = await load_images()
+        
+        with_text_count = len(user_state['images']['with_text'])
+        without_text_count = len(user_state['images']['without_text'])
+        
+        # Отправляем итоговое сообщение
+        await event.edit(
+            f"✅ Очистка завершена! Удалено файлов: {deleted_count}\n\n"
+            f"Текущая коллекция:\n"
+            f"📝 Мемы с текстом: {with_text_count}\n"
+            f"🖼️ Мемы без текста: {without_text_count}",
+            buttons=[
+                [Button.inline("↩️ Вернуться в меню", data="menu")]
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при очистке: {e}")
+        await event.edit(
+            f"❌ Ошибка при очистке: {str(e)}",
+            buttons=[
+                [Button.inline("↩️ Вернуться в меню", data="menu")]
+            ]
+        )
+
+@bot.on(events.CallbackQuery(pattern=r"parse_memes"))
+async def parse_memes_button_handler(event):
+    """Обработчик кнопки запуска парсера"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Показываем сообщение о запуске парсера
+    await event.edit(
+        "🚀 Выберите режим парсинга:",
+        buttons=[
+            [Button.inline("📊 Стандартный (30 мемов)", data="parse_standard")],
+            [Button.inline("📈 Расширенный (100 мемов)", data="parse_extended")],
+            [Button.inline("↩️ Назад", data="menu")]
+        ]
+    )
+
+@bot.on(events.CallbackQuery(pattern=r"parse_standard|parse_extended"))
+async def parse_mode_handler(event):
+    """Обработчик выбора режима парсинга"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    data = event.data.decode('utf-8')
+    
+    # Определяем лимит в зависимости от выбранного режима
+    limit = 100 if data == "parse_extended" else 30
+    
+    # Отправляем сообщение о запуске парсера
+    await event.edit(f"🚀 Запускаю парсер мемов из Telegram-каналов...\nРежим: {'Расширенный' if data == 'parse_extended' else 'Стандартный'}\nЭто может занять некоторое время.")
+    
+    try:
+        # Импортируем парсер из файла parser.py
+        import importlib.util
+        import sys
+        
+        logger.info(f"Загрузка модуля parser.py с лимитом {limit}")
+        spec = importlib.util.spec_from_file_location("parser", "parser.py")
+        parser_module = importlib.util.module_from_spec(spec)
+        
+        try:
+            spec.loader.exec_module(parser_module)
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке parser.py: {e}")
+            await event.edit(
+                f"❌ Ошибка при загрузке парсера: {str(e)}",
+                buttons=[
+                    [Button.inline("↩️ Вернуться в меню", data="menu")]
+                ]
+            )
+            return
+        
+        # Устанавливаем параметры парсера
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--limit', type=int, default=30)
+        parser.add_argument('--days', type=int, default=2)
+        args = parser.parse_args([])
+        args.limit = limit
+        
+        # Переопределяем параметры в парсер-модуле
+        try:
+            parser_module.args = args
+            logger.info(f"Параметры парсера установлены: limit={limit}")
+        except Exception as e:
+            logger.error(f"Ошибка при установке параметров парсера: {e}")
+            await event.edit(
+                f"❌ Ошибка при настройке парсера: {str(e)}",
+                buttons=[
+                    [Button.inline("↩️ Вернуться в меню", data="menu")]
+                ]
+            )
+            return
+        
+        # Запускаем парсер асинхронно
+        import asyncio
+        
+        # Создаем объект для отслеживания прогресса
+        progress_task = None
+        
+        # Запускаем парсер
+        try:
+            task = asyncio.create_task(parser_module.main())
+            logger.info("Парсер запущен асинхронно")
+            
+            # Обновляем сообщение с прогрессом
+            for i in range(5):
+                await event.edit(f"🚀 Парсер запущен в режиме {limit} мемов. Обработка данных... {'.'.join(['■'] * (i+1))}")
+                await asyncio.sleep(1)
+            
+            # Ждем завершения парсинга
+            await task
+            logger.info("Парсер успешно завершил работу")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении парсера: {e}")
+            await event.edit(
+                f"❌ Ошибка при выполнении парсера: {str(e)}",
+                buttons=[
+                    [Button.inline("↩️ Вернуться в меню", data="menu")]
+                ]
+            )
+            return
+        
+        # Обновляем список изображений
+        try:
+            user_state['images'] = await load_images()
+            logger.info("Список изображений успешно обновлен после парсинга")
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении списка изображений: {e}")
+            await event.edit(
+                f"❌ Ошибка при обновлении списка изображений: {str(e)}",
+                buttons=[
+                    [Button.inline("↩️ Вернуться в меню", data="menu")]
+                ]
+            )
+            return
+        
+        with_text_count = len(user_state['images']['with_text'])
+        without_text_count = len(user_state['images']['without_text'])
+        
+        # Отправляем итоговое сообщение
+        await event.edit(
+            f"✅ Парсинг завершен!\n\n"
+            f"Текущая коллекция:\n"
+            f"📝 Мемы с текстом: {with_text_count}\n"
+            f"🖼️ Мемы без текста: {without_text_count}\n\n"
+            f"Выберите действие:",
+            buttons=[
+                [Button.inline("📷 Просмотреть с текстом", data="category_with_text")],
+                [Button.inline("🖼️ Просмотреть без текста", data="category_without_text")],
+                [Button.inline("📋 Главное меню", data="menu")]
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Общая ошибка при запуске парсера: {e}")
+        await event.edit(
+            f"❌ Ошибка при запуске парсера: {str(e)}",
+            buttons=[
+                [Button.inline("↩️ Вернуться в меню", data="menu")]
+            ]
+        )
+
+@bot.on(events.CallbackQuery(pattern=r"clear_menu"))
+async def clear_menu_handler(event):
+    """Обработчик кнопки очистки коллекции"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Показываем меню очистки
+    await event.edit(
+        "🗑️ Выберите, что именно хотите очистить:",
+        buttons=[
+            [Button.inline("❌ Все мемы", data="clear_all")],
+            [Button.inline("📝 Только мемы с текстом", data="clear_with_text")],
+            [Button.inline("🖼️ Только мемы без текста", data="clear_without_text")],
+            [Button.inline("↩️ Назад", data="menu")]
+        ]
+    )
+
+@bot.on(events.CallbackQuery(pattern=r"update_collection"))
+async def update_collection_handler(event):
+    """Обработчик кнопки обновления коллекции"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Отправляем сообщение о начале обновления
+    await event.edit("🔄 Обновляю коллекцию мемов...")
+    
+    try:
+        # Обновляем список изображений
+        user_state['images'] = await load_images()
+        
+        with_text_count = len(user_state['images']['with_text'])
+        without_text_count = len(user_state['images']['without_text'])
+        
+        # Отправляем итоговое сообщение
+        await event.edit(
+            f"✅ Коллекция обновлена!\n\n"
+            f"Текущая статистика:\n"
+            f"📝 Мемы с текстом: {with_text_count}\n"
+            f"🖼️ Мемы без текста: {without_text_count}",
+            buttons=[
+                [Button.inline("📷 Просмотреть с текстом", data="category_with_text")],
+                [Button.inline("🖼️ Просмотреть без текста", data="category_without_text")],
+                [Button.inline("↩️ Вернуться в меню", data="menu")]
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении коллекции: {e}")
+        await event.edit(
+            f"❌ Ошибка при обновлении коллекции: {str(e)}",
+            buttons=[
+                [Button.inline("↩️ Вернуться в меню", data="menu")]
+            ]
+        )
 
 if __name__ == "__main__":
     # Запускаем асинхронную функцию в event loop
