@@ -31,6 +31,8 @@ OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generat
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'phi3')
 # Пароль для доступа к боту
 BOT_PASSWORD = os.getenv('BOT_PASSWORD', 'admin123')
+# Канал для публикации мемов
+TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '')
 
 # Инициализация клиента - перемещаем в глобальную область видимости
 bot = TelegramClient('meme_bot_session', API_ID, API_HASH)
@@ -598,12 +600,19 @@ async def text_message_handler(event):
             meme_path = await create_meme(image_path, top_text, bottom_text)
             
             if meme_path:
+                # Создаем хэш для пути к файлу
+                file_hash = get_path_hash(meme_path)
+                
                 # Отправляем мем пользователю
                 await bot.send_file(user_id, meme_path, caption="✅ Вот ваш мем!", buttons=[
                     [Button.inline("📷 Создать еще мем", data="create_meme")],
+                    [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
                     [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
                     [Button.inline("📋 Главное меню", data="menu")]
                 ])
+                
+                # Сохраняем путь к мему в данных пользователя для возможности последующей публикации
+                user_data[user_id]['last_meme'] = meme_path
                 
                 # Обновляем список изображений
                 user_state['images'] = await load_images()
@@ -612,8 +621,7 @@ async def text_message_handler(event):
             else:
                 await event.respond("❌ Произошла ошибка при создании мема.")
             
-            # Сбрасываем данные пользователя
-            user_data[user_id] = {}
+            # НЕ сбрасываем данные пользователя полностью, оставляем last_meme
             return
             
         elif state == AWAITING_AI_THEME:
@@ -642,6 +650,9 @@ async def text_message_handler(event):
                 await processing_message.delete()
                 
                 if meme_path:
+                    # Создаем хэш для пути к файлу
+                    file_hash = get_path_hash(meme_path)
+                    
                     # Отправляем готовый мем
                     await bot.send_file(
                         user_id,
@@ -649,6 +660,7 @@ async def text_message_handler(event):
                         caption=f"✅ Мем создан ИИ по теме '{theme}':\n\nВерх: {top_text}\nНиз: {bottom_text}",
                         buttons=[
                             [Button.inline("📷 Создать еще мем", data="create_meme")],
+                            [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
                             [Button.inline("🤖 Еще ИИ-мем", data="create_meme_ai_theme")],
                             [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
                             [Button.inline("📋 Главное меню", data="menu")]
@@ -863,6 +875,37 @@ async def create_meme(image_path, top_text, bottom_text):
     except Exception as e:
         logger.error(f"Ошибка при создании мема: {e}")
         return None
+
+async def publish_to_channel(image_path, caption=""):
+    """
+    Публикует изображение в канал
+    
+    Args:
+        image_path: путь к изображению
+        caption: подпись к изображению (опционально)
+        
+    Returns:
+        bool: True - если успешно опубликовано, False - если произошла ошибка
+    """
+    try:
+        # Проверяем, что файл существует
+        if not os.path.exists(image_path):
+            logger.error(f"Файл не существует: {image_path}")
+            return False
+            
+        # Отправляем в канал
+        await bot.send_file(
+            TARGET_CHANNEL,
+            file=str(image_path),
+            caption=caption or "Мем от бота"
+        )
+        
+        logger.info(f"Изображение успешно опубликовано в канале @{TARGET_CHANNEL}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка при публикации в канал: {e}")
+        return False
 
 # Обновляем функцию, которая создает клавиатуру для изображения, добавляя кнопку "Создать мем"
 def get_image_keyboard(image_index, total_images, category):
@@ -1096,12 +1139,16 @@ async def handle_template_selection(event):
         # Отправляем готовый мем
         await event.delete()  # Удаляем сообщение с выбором темы
         
+        # Создаем хэш для пути к файлу
+        file_hash = get_path_hash(meme_path)
+        
         await bot.send_file(
             user_id,
-            file=str(meme_path),  # Преобразуем Path в строку
+            file=str(meme_path),
             caption=f"✅ Мем создан по шаблону темы '{category}':\n\nВерх: {top_text}\nНиз: {bottom_text}",
             buttons=[
                 [Button.inline("📷 Создать еще мем", data="create_meme")],
+                [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
                 [Button.inline("🎭 Еще по шаблону", data="template_meme")],
                 [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
                 [Button.inline("📋 Главное меню", data="menu")]
@@ -1307,12 +1354,16 @@ async def create_meme_ai_auto_handler(event):
         # Отправляем готовый мем
         await event.delete()  # Удаляем сообщение о создании
         
+        # Создаем хэш для пути к файлу
+        file_hash = get_path_hash(meme_path)
+        
         await bot.send_file(
             user_id,
             file=str(meme_path),
             caption=f"✅ Мем создан с помощью ИИ:\n↑ {top_text}\n↓ {bottom_text}",
             buttons=[
                 [Button.inline("📷 Создать еще мем", data="create_meme")],
+                [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
                 [Button.inline("🧠 Еще ИИ-автомем", data="create_meme_ai_auto")],
                 [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
                 [Button.inline("📋 Главное меню", data="menu")]
@@ -1577,7 +1628,7 @@ async def callback_handler(event):
             if user_state['images'][user_state['current_category']]:
                 # Если индекс теперь за пределами списка, корректируем
                 if user_state['current_index'] >= len(user_state['images'][user_state['current_category']]):
-                    user_state['current_index'] = len(user_state['images'][user_state['current_category']]) - 1
+                    user_state['current_index'] = 0
                 await send_current_image(event)
             else:
                 await event.edit(f"В категории больше нет мемов.", buttons=[
@@ -1706,6 +1757,106 @@ async def main():
     finally:
         await bot.disconnect()
         logger.info("Бот остановлен")
+
+# Обработчик для публикации мема в канал
+@bot.on(events.CallbackQuery(pattern=r"publish_"))
+async def publish_handler(event):
+    """
+    Обработчик для публикации мема в канал
+    """
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Отправляем уведомление о том, что началась публикация
+    await event.answer("📢 Отправка в канал...")
+    
+    # Получаем путь к мему
+    data = event.data.decode('utf-8')
+    
+    # Извлекаем хэш или используем last_meme
+    image_path = None
+    
+    # Проверяем есть ли сохраненный мем у пользователя
+    if user_id in user_data and 'last_meme' in user_data[user_id]:
+        image_path = user_data[user_id]['last_meme']
+    else:
+        # Если нет сохранённого пути, извлекаем хэш из данных кнопки
+        try:
+            # Формат данных: publish_hash
+            hash_value = data.split('_', 1)[1]
+            if hash_value in meme_path_hash_map:
+                image_path = meme_path_hash_map[hash_value]
+            else:
+                await event.edit("❌ Не удалось найти изображение для публикации.")
+                return
+        except Exception as e:
+            logger.error(f"Ошибка при извлечении хэша изображения: {e}")
+            await event.edit("❌ Не удалось найти изображение для публикации.")
+            return
+    
+    # Проверяем существование файла
+    if not os.path.exists(image_path):
+        await event.edit("❌ Файл не найден. Возможно, он был удален.")
+        return
+    
+    # Отправляем статус
+    processing_msg = await event.edit("📤 Публикация мема в канал @" + TARGET_CHANNEL + "...")
+    
+    # Публикуем в канал
+    success = await publish_to_channel(image_path, "Мем от @" + (await bot.get_me()).username)
+    
+    if success:
+        # Если публикация успешна
+        await processing_msg.edit(
+            f"✅ Мем успешно опубликован в канале @{TARGET_CHANNEL}!",
+            buttons=[
+                [Button.inline("📷 Создать еще мем", data="create_meme")],
+                [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
+                [Button.inline("📋 Главное меню", data="menu")]
+            ]
+        )
+    else:
+        # Если произошла ошибка
+        file_hash = get_path_hash(image_path)
+        await processing_msg.edit(
+            f"❌ Не удалось опубликовать мем в канале @{TARGET_CHANNEL}.",
+            buttons=[
+                [Button.inline("🔄 Попробовать снова", data=f"publish_{file_hash}")],
+                [Button.inline("📋 Главное меню", data="menu")]
+            ]
+        )
+
+# Словарь для хранения соответствия хэшей и путей к файлам мемов
+meme_path_hash_map = {}
+
+def get_path_hash(file_path):
+    """
+    Создает короткий хэш для пути к файлу и сохраняет соответствие в словаре
+    
+    Args:
+        file_path: полный путь к файлу
+        
+    Returns:
+        str: короткий хэш для использования в callback data
+    """
+    # Создаем короткий MD5 хэш пути
+    hash_obj = hashlib.md5(str(file_path).encode())
+    short_hash = hash_obj.hexdigest()[:8]
+    
+    # Сохраняем соответствие хэша и пути
+    meme_path_hash_map[short_hash] = str(file_path)
+    
+    return short_hash
 
 if __name__ == "__main__":
     # Запускаем асинхронную функцию в event loop
