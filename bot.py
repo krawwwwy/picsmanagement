@@ -389,6 +389,9 @@ async def send_current_image(event, new_message=False):
     # Общее количество изображений в категории
     total_images = len(user_state['images'][category])
     
+    # Создаем хэш для публикации текущего изображения
+    file_hash = get_path_hash(current_image)
+    
     # Создаем клавиатуру для навигации
     keyboard = [
         [
@@ -402,13 +405,14 @@ async def send_current_image(event, new_message=False):
         ],
         [
             Button.inline("✏️ Создать мем", data="create_meme"),
+            Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}"),
+        ],
+        [
             Button.inline("🎭 Шаблоны", data="template_meme"),
-        ],
-        [
             Button.inline("🤖 ИИ + Тема", data="create_meme_ai_theme"),
-            Button.inline("🧠 ИИ Автомат", data="create_meme_ai_auto"),
         ],
         [
+            Button.inline("🧠 ИИ Автомат", data="create_meme_ai_auto"),
             Button.inline("📋 Меню", data="menu")
         ]
     ]
@@ -893,11 +897,11 @@ async def publish_to_channel(image_path, caption=""):
             logger.error(f"Файл не существует: {image_path}")
             return False
             
-        # Отправляем в канал
+        # Отправляем в канал без подписи
         await bot.send_file(
             TARGET_CHANNEL,
             file=str(image_path),
-            caption=caption or "Мем от бота"
+            caption=""  # Пустая подпись
         )
         
         logger.info(f"Изображение успешно опубликовано в канале @{TARGET_CHANNEL}")
@@ -1758,11 +1762,11 @@ async def main():
         await bot.disconnect()
         logger.info("Бот остановлен")
 
-# Обработчик для публикации мема в канал
+# Обработчик для публикации мема или изображения в канал
 @bot.on(events.CallbackQuery(pattern=r"publish_"))
 async def publish_handler(event):
     """
-    Обработчик для публикации мема в канал
+    Обработчик для публикации мема или изображения в канал
     """
     user_id = event.sender_id
     
@@ -1780,7 +1784,7 @@ async def publish_handler(event):
     # Отправляем уведомление о том, что началась публикация
     await event.answer("📢 Отправка в канал...")
     
-    # Получаем путь к мему
+    # Получаем путь к изображению
     data = event.data.decode('utf-8')
     
     # Извлекаем хэш или используем last_meme
@@ -1809,19 +1813,22 @@ async def publish_handler(event):
         await event.edit("❌ Файл не найден. Возможно, он был удален.")
         return
     
+    # Определяем, это мем или исходное изображение
+    is_meme = "meme_" in os.path.basename(image_path)
+    
     # Отправляем статус
-    processing_msg = await event.edit("📤 Публикация мема в канал @" + TARGET_CHANNEL + "...")
+    processing_msg = await event.edit("📤 Публикация изображения в канал @" + TARGET_CHANNEL + "...")
     
     # Публикуем в канал
-    success = await publish_to_channel(image_path, "Мем от @" + (await bot.get_me()).username)
+    success = await publish_to_channel(image_path, "")
     
     if success:
         # Если публикация успешна
         await processing_msg.edit(
-            f"✅ Мем успешно опубликован в канале @{TARGET_CHANNEL}!",
+            f"✅ Изображение успешно опубликовано в канале @{TARGET_CHANNEL}!",
             buttons=[
                 [Button.inline("📷 Создать еще мем", data="create_meme")],
-                [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
+                [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu" if is_meme else "menu")],
                 [Button.inline("📋 Главное меню", data="menu")]
             ]
         )
@@ -1829,7 +1836,7 @@ async def publish_handler(event):
         # Если произошла ошибка
         file_hash = get_path_hash(image_path)
         await processing_msg.edit(
-            f"❌ Не удалось опубликовать мем в канале @{TARGET_CHANNEL}.",
+            f"❌ Не удалось опубликовать изображение в канале @{TARGET_CHANNEL}.",
             buttons=[
                 [Button.inline("🔄 Попробовать снова", data=f"publish_{file_hash}")],
                 [Button.inline("📋 Главное меню", data="menu")]
