@@ -1412,7 +1412,8 @@ async def start_handler(event):
                 [Button.inline("Своя картинка", data="custom_image")],
                 [Button.inline("Обновить коллекцию", data="reload_images")],
                 [Button.inline("🚀 Запустить парсер", data="parse_memes")],
-                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")]
+                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")],
+                [Button.inline("🛑 Остановить бота", data="stop_bot")]
             ]
         )
     elif user_id == ADMIN_USER_ID:
@@ -1451,6 +1452,7 @@ async def help_handler(event):
         "/start - начать работу с ботом\n"
         "/help - показать эту справку\n"
         "/logout - выйти из системы\n"
+        "/stop - остановить бота\n"
         "/skip - пропустить ввод текста при создании мема (можно также просто ввести 'skip')\n"
         "/parse - запустить парсер для сбора новых мемов из каналов\n"
         "/clear - управление коллекцией мемов (очистка)\n\n"
@@ -1501,7 +1503,8 @@ async def callback_handler(event):
                 [Button.inline("Своя картинка", data="custom_image")],
                 [Button.inline("Обновить коллекцию", data="reload_images")],
                 [Button.inline("🚀 Запустить парсер", data="parse_memes")],
-                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")]
+                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")],
+                [Button.inline("🛑 Остановить бота", data="stop_bot")]
             ]
         )
         
@@ -1517,7 +1520,8 @@ async def callback_handler(event):
                 [Button.inline("Без текста", data="category_without_text")],
                 [Button.inline("Своя картинка", data="custom_image")],
                 [Button.inline("🚀 Запустить парсер", data="parse_memes")],
-                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")]
+                [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")],
+                [Button.inline("🛑 Остановить бота", data="stop_bot")]
             ]
         )
 
@@ -1864,6 +1868,61 @@ def get_path_hash(file_path):
     meme_path_hash_map[short_hash] = str(file_path)
     
     return short_hash
+
+@bot.on(events.CallbackQuery(pattern=r"stop_bot"))
+async def stop_bot_handler(event):
+    """Обработчик для полной остановки бота"""
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этой функции.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    await event.edit("🛑 Останавливаю бота...")
+    await asyncio.sleep(1)  # Дадим время для отображения сообщения
+    logger.info("Бот остановлен по команде пользователя")
+    
+    # Прерываем работу бота
+    await bot.disconnect()
+    await event.client.disconnect()
+    
+    # Завершаем программу полностью
+    import sys
+    sys.exit(0)
+
+@bot.on(events.NewMessage(pattern='/stop'))
+async def stop_command_handler(event):
+    """Обработчик команды /stop для остановки бота"""
+    user_id = event.sender_id
+    
+    # Проверяем, что это администратор и он авторизован
+    if user_id != ADMIN_USER_ID:
+        await event.respond("🔒 У вас нет доступа к этому боту.")
+        return
+    
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        return
+    
+    await event.respond("🛑 Останавливаю бота...")
+    logger.info("Бот остановлен по команде пользователя")
+    
+    # Небольшая задержка для того, чтобы сообщение успело отправиться
+    await asyncio.sleep(1)
+    
+    # Прерываем работу бота
+    await bot.disconnect()
+    
+    # Завершаем программу полностью
+    import sys
+    sys.exit(0)
 
 if __name__ == "__main__":
     # Запускаем асинхронную функцию в event loop
