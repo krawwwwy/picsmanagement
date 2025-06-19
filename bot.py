@@ -63,6 +63,7 @@ CREATING_AI_MEME = "creating_ai_meme"  # Состояние создания м�
 AWAITING_TEMPLATE_THEME = "awaiting_template_theme"  # Новое состояние - ожидаем выбор темы
 AWAITING_PASSWORD = "awaiting_password"  # Новое состояние - ожидание ввода пароля
 AWAITING_CUSTOM_IMAGE = "awaiting_custom_image"  # Новое состояние - ожидание загрузки пользовательской картинки
+FONT_SIZE_SELECTION = "font_size_selection"  # Новое состояние - выбор размера шрифта
 
 # Темы для шаблонов мемов
 TEMPLATE_THEMES = [
@@ -70,6 +71,9 @@ TEMPLATE_THEMES = [
     "Еда", "Технологии", "Животные", "Спорт",
     "Учеба", "Путешествия"
 ]
+
+# Базовый размер шрифта для мемов (в процентах от высоты изображения)
+DEFAULT_FONT_SIZE_PERCENT = 10  # 1/10 от высоты изображения
 
 # Эмодзи для тем
 THEME_EMOJI = {
@@ -593,39 +597,16 @@ async def text_message_handler(event):
                 user_data[user_id] = {}  # Очищаем данные
                 return
             
-            # Создаем мем на основе введенных данных
+            # Получаем данные для создания мема
             image_path = user_data[user_id]['current_image']
             top_text = user_data[user_id]['top_text']
             bottom_text = user_data[user_id]['bottom_text']
             
-            await event.respond("🔄 Создаю мем, пожалуйста, подождите...")
+            await event.respond("🔄 Подготавливаю мем, выберите размер шрифта...")
             
-            # Создаем мем
-            meme_path = await create_meme(image_path, top_text, bottom_text)
+            # Вместо создания мема, показываем интерфейс выбора размера шрифта
+            await show_font_size_selection(event, image_path, top_text, bottom_text)
             
-            if meme_path:
-                # Создаем хэш для пути к файлу
-                file_hash = get_path_hash(meme_path)
-                
-                # Отправляем мем пользователю
-                await bot.send_file(user_id, meme_path, caption="✅ Вот ваш мем!", buttons=[
-                    [Button.inline("📷 Создать еще мем", data="create_meme")],
-                    [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
-                    [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
-                    [Button.inline("📋 Главное меню", data="menu")]
-                ])
-                
-                # Сохраняем путь к мему в данных пользователя для возможности последующей публикации
-                user_data[user_id]['last_meme'] = meme_path
-                
-                # Обновляем список изображений
-                user_state['images'] = await load_images()
-                
-                logger.info(f"Создан новый мем: {meme_path}")
-            else:
-                await event.respond("❌ Произошла ошибка при создании мема.")
-            
-            # НЕ сбрасываем данные пользователя полностью, оставляем last_meme
             return
             
         elif state == AWAITING_AI_THEME:
@@ -644,48 +625,20 @@ async def text_message_handler(event):
                 top_text, bottom_text = await generate_meme_text(theme)
                 
                 # Обновляем сообщение о статусе
-                await processing_message.edit(f"⚙️ Генерация текста завершена! Создаю мем...")
+                await processing_message.edit(f"⚙️ Генерация текста завершена!\n↑ {top_text}\n↓ {bottom_text}\n\n🔄 Выберите размер шрифта...")
                 
                 # Создаем мем с полученным текстом
                 image_path = user_data[user_id]['current_image']
-                meme_path = await create_meme(image_path, top_text, bottom_text)
                 
-                # Удаляем сообщение о генерации
-                await processing_message.delete()
+                # Показываем интерфейс выбора размера шрифта
+                await show_font_size_selection(processing_message, image_path, top_text, bottom_text)
                 
-                if meme_path:
-                    # Создаем хэш для пути к файлу
-                    file_hash = get_path_hash(meme_path)
-                    
-                    # Отправляем готовый мем
-                    await bot.send_file(
-                        user_id,
-                        file=str(meme_path),
-                        caption=f"✅ Мем создан ИИ по теме '{theme}':\n\nВерх: {top_text}\nНиз: {bottom_text}",
-                        buttons=[
-                            [Button.inline("📷 Создать еще мем", data="create_meme")],
-                            [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
-                            [Button.inline("🤖 Еще ИИ-мем", data="create_meme_ai_theme")],
-                            [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
-                            [Button.inline("📋 Главное меню", data="menu")]
-                        ]
-                    )
-                    
-                    # Обновляем список изображений
-                    user_state['images'] = await load_images()
-                    
-                    logger.info(f"Создан новый мем с помощью ИИ на тему '{theme}': {meme_path}")
-                else:
-                    await event.respond("❌ Произошла ошибка при создании мема.")
-            
             except Exception as e:
                 # В случае ошибки удаляем сообщение о генерации и отправляем сообщение об ошибке
                 await processing_message.delete()
                 logger.error(f"Ошибка при генерации мема по теме '{theme}': {e}")
                 await event.respond(f"❌ Произошла ошибка при создании мема: {str(e)[:100]}...")
             
-            # Сбрасываем данные пользователя
-            user_data[user_id] = {}
             return
     else:
         # Если пользователь не находится в каком-либо состоянии FSM, 
@@ -693,7 +646,7 @@ async def text_message_handler(event):
         logger.info(f"Получено сообщение вне FSM от пользователя {user_id}: '{message_text}'")
         # Не отвечаем, чтобы не спамить пользователя
 
-async def create_meme(image_path, top_text, bottom_text):
+async def create_meme(image_path, top_text, bottom_text, font_size_percent=None):
     """
     Создает мем, добавляя текст сверху и снизу изображения
     
@@ -701,11 +654,16 @@ async def create_meme(image_path, top_text, bottom_text):
         image_path: путь к исходному изображению
         top_text: текст для размещения сверху
         bottom_text: текст для размещения снизу
+        font_size_percent: размер шрифта в процентах от высоты изображения (по умолчанию DEFAULT_FONT_SIZE_PERCENT)
         
     Returns:
         str: путь к созданному изображению или None в случае ошибки
     """
     try:
+        # Если размер шрифта не указан, используем стандартный
+        if font_size_percent is None:
+            font_size_percent = DEFAULT_FONT_SIZE_PERCENT
+            
         # Открываем изображение
         with Image.open(image_path) as img:
             # Создаем копию, чтобы не изменять оригинал
@@ -717,8 +675,9 @@ async def create_meme(image_path, top_text, bottom_text):
             # Создаем объект для рисования
             draw = ImageDraw.Draw(img)
             
-            # Настраиваем шрифт и его размер (примерно 1/10 от высоты изображения для более крупного текста)
-            font_size = int(height / 10)  # Увеличенный размер шрифта (было 1/15)
+            # Настраиваем шрифт и его размер (в процентах от высоты изображения)
+            font_size = int(height * font_size_percent / 100)
+            
             # Пытаемся использовать шрифт Impact (классический шрифт мемов)
             try:
                 # Список возможных путей к шрифту Impact
@@ -955,6 +914,17 @@ def register_handlers():
         events.NewMessage(pattern='/help')
     )
     
+    # Обработчики для остановки бота
+    bot.add_event_handler(
+        stop_command_handler,
+        events.NewMessage(pattern='/stop')
+    )
+    
+    bot.add_event_handler(
+        stop_bot_handler,
+        events.CallbackQuery(pattern=r"stop_bot")
+    )
+    
     # Общий обработчик callback
     bot.add_event_handler(
         callback_handler,
@@ -992,6 +962,22 @@ def register_handlers():
     bot.add_event_handler(
         handle_template_selection,
         events.CallbackQuery(pattern=r"template_")
+    )
+    
+    # Обработчики для выбора размера шрифта
+    bot.add_event_handler(
+        font_smaller_handler,
+        events.CallbackQuery(pattern=r"font_smaller_")
+    )
+    
+    bot.add_event_handler(
+        font_larger_handler,
+        events.CallbackQuery(pattern=r"font_larger_")
+    )
+    
+    bot.add_event_handler(
+        font_confirm_handler,
+        events.CallbackQuery(pattern=r"font_confirm")
     )
     
     # Обработчик текстовых сообщений для создания мема
@@ -1136,39 +1122,17 @@ async def handle_template_selection(event):
         if not image_path:
             await event.edit(text="⚠️ Изображение не найдено. Пожалуйста, выберите изображение и попробуйте снова.")
             return
-            
-        # Создаем мем с полученным текстом
-        meme_path = await create_meme(image_path, top_text, bottom_text)
         
-        # Отправляем готовый мем
-        await event.delete()  # Удаляем сообщение с выбором темы
+        # Обновляем сообщение о статусе
+        await event.edit(f"✅ Получен текст для мема:\n↑ {top_text}\n↓ {bottom_text}\n\n🔄 Выберите размер шрифта...")
         
-        # Создаем хэш для пути к файлу
-        file_hash = get_path_hash(meme_path)
+        # Показываем интерфейс выбора размера шрифта
+        await show_font_size_selection(event, image_path, top_text, bottom_text)
         
-        await bot.send_file(
-            user_id,
-            file=str(meme_path),
-            caption=f"✅ Мем создан по шаблону темы '{category}':\n\nВерх: {top_text}\nНиз: {bottom_text}",
-            buttons=[
-                [Button.inline("📷 Создать еще мем", data="create_meme")],
-                [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
-                [Button.inline("🎭 Еще по шаблону", data="template_meme")],
-                [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
-                [Button.inline("📋 Главное меню", data="menu")]
-            ]
-        )
-        
-        # Обновляем список изображений
-        user_state['images'] = await load_images()
-        
-        # Очищаем данные пользователя
+        # Очищаем состояние
         user_states[user_id] = None
         if 'current_image_for_meme' in user_data[user_id]:
             del user_data[user_id]['current_image_for_meme']
-            
-        # Возвращаем пользователя к просмотру изображений
-        await send_current_image(event, new_message=True)
             
     except Exception as e:
         logger.error(f"Ошибка при создании мема по шаблону: {e}")
@@ -1340,54 +1304,27 @@ async def create_meme_ai_auto_handler(event):
         )
         return
     
-    # Сохраняем текущее изображение для мема
-    if user_id not in user_data:
-        user_data[user_id] = {}
-    user_data[user_id]['current_image'] = current_image
-    
     # Изменяем сообщение, чтобы показать, что мем создается
-    await event.edit("⏳ Создаем мем с помощью ИИ...")
+    await event.edit("⏳ Генерирую текст для мема с помощью ИИ...")
     
     try:
         # Генерируем текст мема
         top_text, bottom_text = await generate_meme_text()
         
-        # Создаем мем с полученным текстом
-        meme_path = await create_meme(current_image, top_text, bottom_text)
+        # Уведомляем о прогрессе
+        await event.edit(f"✅ Текст сгенерирован:\n↑ {top_text}\n↓ {bottom_text}\n\n🔄 Выберите размер шрифта...")
         
-        # Отправляем готовый мем
-        await event.delete()  # Удаляем сообщение о создании
+        # Сохраняем текущее изображение для мема
+        if user_id not in user_data:
+            user_data[user_id] = {}
         
-        # Создаем хэш для пути к файлу
-        file_hash = get_path_hash(meme_path)
-        
-        await bot.send_file(
-            user_id,
-            file=str(meme_path),
-            caption=f"✅ Мем создан с помощью ИИ:\n↑ {top_text}\n↓ {bottom_text}",
-            buttons=[
-                [Button.inline("📷 Создать еще мем", data="create_meme")],
-                [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
-                [Button.inline("🧠 Еще ИИ-автомем", data="create_meme_ai_auto")],
-                [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
-                [Button.inline("📋 Главное меню", data="menu")]
-            ]
-        )
-        
-        # Обновляем список изображений
-        user_state['images'] = await load_images()
-        
-        # Очищаем данные пользователя и возвращаемся к просмотру изображений
-        if 'current_image' in user_data[user_id]:
-            del user_data[user_id]['current_image']
-            
-        # Возвращаем пользователя к просмотру изображений
-        await send_current_image(event, new_message=True)
+        # Показываем интерфейс выбора размера шрифта
+        await show_font_size_selection(event, current_image, top_text, bottom_text)
         
     except Exception as e:
         logger.error(f"Ошибка при создании мема с ИИ: {e}")
         await event.edit(
-            f"❌ Ошибка при создании мема: {str(e)}",
+            f"❌ Ошибка при генерации текста для мема: {str(e)}",
             buttons=[
                 [Button.inline("🔙 Вернуться", data="back_to_meme_menu")]
             ]
@@ -1464,7 +1401,8 @@ async def help_handler(event):
         "✏️ Создать мем - ручной ввод текста\n"
         "🎭 Шаблоны - выбор готовых шаблонов по темам\n"
         "🤖 ИИ + Тема - генерация текста по указанной теме с помощью ИИ\n"
-        "🧠 ИИ Автомат - автоматическая генерация текста с помощью ИИ\n\n"
+        "🧠 ИИ Автомат - автоматическая генерация текста с помощью ИИ\n"
+        "📏 Размер шрифта - после создания мема можно настроить размер шрифта\n\n"
         "**Доступные темы для шаблонов:**\n"
         "💻 Программирование, 💼 Работа, 🌐 Интернет, ❤️ Отношения, "
         "🍔 Еда, 📱 Технологии, 🐱 Животные, 🏃 Спорт, 📚 Учеба, ✈️ Путешествия\n\n"
@@ -1923,6 +1861,229 @@ async def stop_command_handler(event):
     # Завершаем программу полностью
     import sys
     sys.exit(0)
+
+async def show_font_size_selection(event, meme_path, top_text, bottom_text, font_size_percent=None):
+    """
+    Отображает интерфейс выбора размера шрифта для мема
+    
+    Args:
+        event: Telegram event
+        meme_path: путь к исходному изображению (не к мему!)
+        top_text: верхний текст мема
+        bottom_text: нижний текст мема
+        font_size_percent: текущий размер шрифта в процентах
+    """
+    user_id = event.sender_id
+    
+    # Если размер шрифта не указан, используем стандартный
+    if font_size_percent is None:
+        font_size_percent = DEFAULT_FONT_SIZE_PERCENT
+    
+    # Сохраняем данные в user_data
+    if user_id not in user_data:
+        user_data[user_id] = {}
+    
+    user_data[user_id]['meme_source'] = meme_path
+    user_data[user_id]['top_text'] = top_text
+    user_data[user_id]['bottom_text'] = bottom_text
+    user_data[user_id]['font_size_percent'] = font_size_percent
+    
+    # Создаем мем с текущим размером шрифта
+    new_meme_path = await create_meme(meme_path, top_text, bottom_text, font_size_percent)
+    
+    if not new_meme_path:
+        await event.respond("❌ Произошла ошибка при создании мема.")
+        return
+    
+    # Сохраняем путь к созданному мему
+    user_data[user_id]['last_meme'] = new_meme_path
+    
+    # Создаем хэш для пути к файлу для публикации
+    file_hash = get_path_hash(new_meme_path)
+    
+    # Устанавливаем состояние пользователя
+    user_states[user_id] = FONT_SIZE_SELECTION
+    
+    # Отправляем мем с кнопками регулировки размера шрифта
+    buttons = [
+        [Button.inline("🔍 Уменьшить шрифт", data=f"font_smaller_{font_size_percent}")],
+        [Button.inline("🔎 Увеличить шрифт", data=f"font_larger_{font_size_percent}")],
+        [Button.inline("✅ Подтвердить", data=f"font_confirm")],
+        [Button.inline("❌ Отмена", data="back_to_meme_menu")]
+    ]
+    
+    try:
+        # Пробуем удалить предыдущее сообщение (если вызываем через callback)
+        if hasattr(event, 'delete'):
+            await event.delete()
+    except Exception as e:
+        logger.error(f"Не удалось удалить сообщение: {e}")
+    
+    # Отправляем мем с кнопками выбора размера шрифта
+    await bot.send_file(
+        user_id,
+        file=str(new_meme_path),
+        caption=f"📏 Текущий размер шрифта: {font_size_percent}% от высоты изображения.\nВыберите действие:",
+        buttons=buttons
+    )
+
+@bot.on(events.CallbackQuery(pattern=r"font_smaller_"))
+async def font_smaller_handler(event):
+    """Обработчик для уменьшения размера шрифта"""
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Проверяем, находится ли пользователь в состоянии выбора размера шрифта
+    if user_id not in user_states or user_states[user_id] != FONT_SIZE_SELECTION:
+        await event.answer("Сначала выберите опцию создания мема")
+        return
+    
+    # Проверяем, есть ли необходимые данные
+    if user_id not in user_data or 'font_size_percent' not in user_data[user_id]:
+        await event.answer("Ошибка: данные о размере шрифта не найдены")
+        return
+    
+    # Получаем текущий размер шрифта из callback data
+    data = event.data.decode('utf-8')
+    current_size = float(data.split('_')[2])
+    
+    # Уменьшаем размер шрифта на 1%, но не меньше 5%
+    new_size = max(5, current_size - 1)
+    
+    # Если размер не изменился, уведомляем пользователя
+    if new_size == current_size:
+        await event.answer("Достигнут минимальный размер шрифта")
+        return
+    
+    # Получаем данные для создания нового мема
+    meme_source = user_data[user_id]['meme_source']
+    top_text = user_data[user_id]['top_text']
+    bottom_text = user_data[user_id]['bottom_text']
+    
+    # Показываем уведомление пользователю
+    await event.answer(f"Размер шрифта уменьшен до {new_size}%")
+    
+    # Отображаем новый интерфейс выбора размера шрифта
+    await show_font_size_selection(event, meme_source, top_text, bottom_text, new_size)
+
+@bot.on(events.CallbackQuery(pattern=r"font_larger_"))
+async def font_larger_handler(event):
+    """Обработчик для увеличения размера шрифта"""
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Проверяем, находится ли пользователь в состоянии выбора размера шрифта
+    if user_id not in user_states or user_states[user_id] != FONT_SIZE_SELECTION:
+        await event.answer("Сначала выберите опцию создания мема")
+        return
+    
+    # Проверяем, есть ли необходимые данные
+    if user_id not in user_data or 'font_size_percent' not in user_data[user_id]:
+        await event.answer("Ошибка: данные о размере шрифта не найдены")
+        return
+    
+    # Получаем текущий размер шрифта из callback data
+    data = event.data.decode('utf-8')
+    current_size = float(data.split('_')[2])
+    
+    # Увеличиваем размер шрифта на 1%, но не больше 25%
+    new_size = min(25, current_size + 1)
+    
+    # Если размер не изменился, уведомляем пользователя
+    if new_size == current_size:
+        await event.answer("Достигнут максимальный размер шрифта")
+        return
+    
+    # Получаем данные для создания нового мема
+    meme_source = user_data[user_id]['meme_source']
+    top_text = user_data[user_id]['top_text']
+    bottom_text = user_data[user_id]['bottom_text']
+    
+    # Показываем уведомление пользователю
+    await event.answer(f"Размер шрифта увеличен до {new_size}%")
+    
+    # Отображаем новый интерфейс выбора размера шрифта
+    await show_font_size_selection(event, meme_source, top_text, bottom_text, new_size)
+
+@bot.on(events.CallbackQuery(pattern=r"font_confirm"))
+async def font_confirm_handler(event):
+    """Обработчик подтверждения размера шрифта и завершения создания мема"""
+    user_id = event.sender_id
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id != ADMIN_USER_ID:
+        await event.answer("⛔ У вас нет доступа к этому боту.", alert=True)
+        return
+    
+    # Проверяем авторизацию
+    if user_id not in authenticated_users:
+        await event.respond("🔒 Вы не авторизованы. Отправьте /start для ввода пароля.")
+        await event.answer()
+        return
+    
+    # Проверяем, находится ли пользователь в состоянии выбора размера шрифта
+    if user_id not in user_states or user_states[user_id] != FONT_SIZE_SELECTION:
+        await event.answer("Сначала выберите опцию создания мема")
+        return
+    
+    # Проверяем, есть ли необходимые данные
+    if user_id not in user_data or 'last_meme' not in user_data[user_id]:
+        await event.answer("Ошибка: данные о меме не найдены")
+        return
+    
+    # Получаем путь к созданному мему
+    meme_path = user_data[user_id]['last_meme']
+    
+    # Получаем информацию о шрифте для подписи
+    font_size_percent = user_data[user_id].get('font_size_percent', DEFAULT_FONT_SIZE_PERCENT)
+    
+    # Создаем хэш для пути к файлу для публикации
+    file_hash = get_path_hash(meme_path)
+    
+    # Удаляем состояние выбора шрифта
+    del user_states[user_id]
+    
+    # Пытаемся удалить текущее сообщение
+    try:
+        await event.delete()
+    except Exception as e:
+        logger.error(f"Не удалось удалить сообщение: {e}")
+    
+    # Отправляем готовый мем с кнопками для дальнейших действий
+    await bot.send_file(
+        user_id,
+        file=str(meme_path),
+        caption=f"✅ Мем создан! Размер шрифта: {font_size_percent}%",
+        buttons=[
+            [Button.inline("📷 Создать еще мем", data="create_meme")],
+            [Button.inline("📢 Опубликовать в канал", data=f"publish_{file_hash}")],
+            [Button.inline("🔄 Вернуться к просмотру", data="back_to_meme_menu")],
+            [Button.inline("📋 Главное меню", data="menu")]
+        ]
+    )
+    
+    # Обновляем список изображений
+    user_state['images'] = await load_images()
 
 if __name__ == "__main__":
     # Запускаем асинхронную функцию в event loop
