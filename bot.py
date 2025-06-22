@@ -17,6 +17,8 @@ import random
 import json
 import aiohttp
 from enum import Enum, auto
+import subprocess
+import sys
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -1598,6 +1600,268 @@ async def callback_handler(event):
             "Вы можете отправить фото из галереи или отправить его как файл.\n\n"
             "Для отмены отправьте /cancel."
         )
+    
+    elif data == "parse_memes":
+        # Запуск парсера мемов
+        await event.edit("🚀 Запускаю парсер мемов из Telegram-каналов...")
+        
+        try:
+            # Запуск парсера в отдельном процессе
+            process = subprocess.Popen([sys.executable, "parser.py"], 
+                                      stdout=subprocess.PIPE, 
+                                      stderr=subprocess.PIPE,
+                                      text=True)
+            
+            # Ждем завершения процесса с таймаутом
+            try:
+                stdout, stderr = process.communicate(timeout=60)  # Ждем максимум 60 секунд
+                
+                if process.returncode == 0:
+                    # Парсер успешно завершил работу
+                    await event.edit("✅ Парсер успешно завершил работу! Обновляю коллекцию мемов...")
+                    
+                    # Обновляем список изображений
+                    user_state['images'] = await load_images()
+                    
+                    # Показываем результаты
+                    await event.edit(
+                        "✅ Парсинг мемов завершен!\n\n"
+                        f"С текстом: {len(user_state['images']['with_text'])}\n"
+                        f"Без текста: {len(user_state['images']['without_text'])}\n\n"
+                        "Выберите категорию для просмотра:",
+                        buttons=[
+                            [Button.inline("С текстом", data="category_with_text")],
+                            [Button.inline("Без текста", data="category_without_text")],
+                            [Button.inline("Своя картинка", data="custom_image")],
+                            [Button.inline("Обновить коллекцию", data="reload_images")],
+                            [Button.inline("🚀 Запустить парсер", data="parse_memes")],
+                            [Button.inline("🗑️ Очистить коллекцию", data="clear_menu")],
+                            [Button.inline("🛑 Остановить бота", data="stop_bot")]
+                        ]
+                    )
+                else:
+                    # Произошла ошибка в парсере
+                    error_msg = stderr if stderr else "Неизвестная ошибка"
+                    logger.error(f"Ошибка при запуске парсера: {error_msg}")
+                    await event.edit(
+                        f"❌ Ошибка при запуске парсера: {error_msg[:200]}...\n\n"
+                        "Вернитесь в главное меню:",
+                        buttons=[
+                            [Button.inline("📋 Главное меню", data="menu")]
+                        ]
+                    )
+            except subprocess.TimeoutExpired:
+                # Превышено время ожидания
+                process.kill()
+                logger.error("Превышено время ожидания парсера (60 секунд)")
+                await event.edit(
+                    "⚠️ Превышено время ожидания парсера (60 секунд).\n"
+                    "Парсер продолжает работать в фоновом режиме.\n\n"
+                    "Вы можете обновить коллекцию позже:",
+                    buttons=[
+                        [Button.inline("🔄 Обновить коллекцию", data="reload_images")],
+                        [Button.inline("📋 Главное меню", data="menu")]
+                    ]
+                )
+        except Exception as e:
+            logger.error(f"Ошибка при запуске парсера: {e}")
+            await event.edit(
+                f"❌ Ошибка при запуске парсера: {str(e)[:200]}...\n\n"
+                "Вернитесь в главное меню:",
+                buttons=[
+                    [Button.inline("📋 Главное меню", data="menu")]
+                ]
+            )
+    
+    elif data == "clear_menu":
+        # Меню очистки коллекции мемов
+        await event.edit(
+            "🗑️ Выберите, какие мемы очистить:",
+            buttons=[
+                [Button.inline("Все мемы", data="clear_all")],
+                [Button.inline("Только мемы с текстом", data="clear_with_text")],
+                [Button.inline("Только мемы без текста", data="clear_without_text")],
+                [Button.inline("◀️ Назад", data="menu")]
+            ]
+        )
+    
+    elif data.startswith("clear_"):
+        # Обработка команд очистки
+        clear_type = data.replace("clear_", "")
+        
+        if clear_type == "all":
+            # Очистка всех мемов
+            with_text_dir = WITH_TEXT_DIR
+            without_text_dir = WITHOUT_TEXT_DIR
+            
+            # Проверяем наличие мемов
+            with_text_files = list(with_text_dir.glob("*.jpg")) + list(with_text_dir.glob("*.png"))
+            without_text_files = list(without_text_dir.glob("*.jpg")) + list(without_text_dir.glob("*.png"))
+            
+            total_memes = len(with_text_files) + len(without_text_files)
+            
+            if total_memes == 0:
+                await event.edit(
+                    "❕ Директории мемов уже пусты.",
+                    buttons=[
+                        [Button.inline("◀️ Назад", data="menu")]
+                    ]
+                )
+                return
+            
+            # Запрос подтверждения
+            await event.edit(
+                f"⚠️ Найдено {total_memes} мемов для удаления:\n"
+                f"  - Мемов с текстом: {len(with_text_files)}\n"
+                f"  - Мемов без текста: {len(without_text_files)}\n\n"
+                f"Вы уверены, что хотите удалить ВСЕ мемы?",
+                buttons=[
+                    [Button.inline("✅ Да, удалить все", data="confirm_clear_all")],
+                    [Button.inline("❌ Отмена", data="clear_menu")]
+                ]
+            )
+        
+        elif clear_type == "with_text":
+            # Очистка мемов с текстом
+            with_text_dir = WITH_TEXT_DIR
+            
+            # Проверяем наличие мемов
+            with_text_files = list(with_text_dir.glob("*.jpg")) + list(with_text_dir.glob("*.png"))
+            
+            if not with_text_files:
+                await event.edit(
+                    "❕ Директория мемов с текстом уже пуста.",
+                    buttons=[
+                        [Button.inline("◀️ Назад", data="clear_menu")]
+                    ]
+                )
+                return
+            
+            # Запрос подтверждения
+            await event.edit(
+                f"⚠️ Найдено {len(with_text_files)} мемов с текстом для удаления.\n\n"
+                f"Вы уверены, что хотите удалить ВСЕ мемы с текстом?",
+                buttons=[
+                    [Button.inline("✅ Да, удалить", data="confirm_clear_with_text")],
+                    [Button.inline("❌ Отмена", data="clear_menu")]
+                ]
+            )
+        
+        elif clear_type == "without_text":
+            # Очистка мемов без текста
+            without_text_dir = WITHOUT_TEXT_DIR
+            
+            # Проверяем наличие мемов
+            without_text_files = list(without_text_dir.glob("*.jpg")) + list(without_text_dir.glob("*.png"))
+            
+            if not without_text_files:
+                await event.edit(
+                    "❕ Директория мемов без текста уже пуста.",
+                    buttons=[
+                        [Button.inline("◀️ Назад", data="clear_menu")]
+                    ]
+                )
+                return
+            
+            # Запрос подтверждения
+            await event.edit(
+                f"⚠️ Найдено {len(without_text_files)} мемов без текста для удаления.\n\n"
+                f"Вы уверены, что хотите удалить ВСЕ мемы без текста?",
+                buttons=[
+                    [Button.inline("✅ Да, удалить", data="confirm_clear_without_text")],
+                    [Button.inline("❌ Отмена", data="clear_menu")]
+                ]
+            )
+    
+    elif data.startswith("confirm_clear_"):
+        # Подтверждение очистки мемов
+        clear_type = data.replace("confirm_clear_", "")
+        
+        try:
+            if clear_type == "all":
+                # Удаление всех мемов
+                with_text_dir = WITH_TEXT_DIR
+                without_text_dir = WITHOUT_TEXT_DIR
+                
+                with_text_files = list(with_text_dir.glob("*.jpg")) + list(with_text_dir.glob("*.png"))
+                without_text_files = list(without_text_dir.glob("*.jpg")) + list(without_text_dir.glob("*.png"))
+                
+                total_deleted = 0
+                
+                # Удаление файлов с текстом
+                for file in with_text_files:
+                    os.remove(file)
+                    total_deleted += 1
+                
+                # Удаление файлов без текста
+                for file in without_text_files:
+                    os.remove(file)
+                    total_deleted += 1
+                
+                # Обновляем список изображений
+                user_state['images'] = await load_images()
+                
+                await event.edit(
+                    f"✅ Успешно удалено {total_deleted} мемов.",
+                    buttons=[
+                        [Button.inline("📋 Главное меню", data="menu")]
+                    ]
+                )
+            
+            elif clear_type == "with_text":
+                # Удаление мемов с текстом
+                with_text_dir = WITH_TEXT_DIR
+                
+                with_text_files = list(with_text_dir.glob("*.jpg")) + list(with_text_dir.glob("*.png"))
+                
+                total_deleted = 0
+                
+                # Удаление файлов
+                for file in with_text_files:
+                    os.remove(file)
+                    total_deleted += 1
+                
+                # Обновляем список изображений
+                user_state['images'] = await load_images()
+                
+                await event.edit(
+                    f"✅ Успешно удалено {total_deleted} мемов с текстом.",
+                    buttons=[
+                        [Button.inline("📋 Главное меню", data="menu")]
+                    ]
+                )
+            
+            elif clear_type == "without_text":
+                # Удаление мемов без текста
+                without_text_dir = WITHOUT_TEXT_DIR
+                
+                without_text_files = list(without_text_dir.glob("*.jpg")) + list(without_text_dir.glob("*.png"))
+                
+                total_deleted = 0
+                
+                # Удаление файлов
+                for file in without_text_files:
+                    os.remove(file)
+                    total_deleted += 1
+                
+                # Обновляем список изображений
+                user_state['images'] = await load_images()
+                
+                await event.edit(
+                    f"✅ Успешно удалено {total_deleted} мемов без текста.",
+                    buttons=[
+                        [Button.inline("📋 Главное меню", data="menu")]
+                    ]
+                )
+        
+        except Exception as e:
+            logger.error(f"Ошибка при удалении файлов: {e}")
+            await event.edit(
+                f"❌ Ошибка при удалении файлов: {str(e)[:200]}...",
+                buttons=[
+                    [Button.inline("📋 Главное меню", data="menu")]
+                ]
+            )
         
     elif data == "category_with_text":
         user_state['current_category'] = 'with_text'
